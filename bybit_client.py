@@ -14,15 +14,24 @@ class BybitClient:
     async def start(self):
         self.session = aiohttp.ClientSession()
 
-    async def close(self):
-        if self.session:
-            await self.session.close()
-
-    async def _get(self, path: str, params: dict = None):
+     async def _get(self, path: str, params: dict = None):
         async with self._lock:
-            async with self.session.get(f"{BYBIT_REST}{path}", params=params or {}, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                data = await r.json()
-                return data.get("result", {})
+            try:
+                async with self.session.get(f"{BYBIT_REST}{path}", params=params or {}, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                    if r.status != 200:
+                        text = await r.text()
+                        print(f"[Bybit] Error {r.status} for {path}: {text[:100]}")
+                        return {}
+                    try:
+                        data = await r.json()
+                        return data.get("result", {})
+                    except Exception as e:
+                        text = await r.text()
+                        print(f"[Bybit] JSON error for {path}: {e}. Response: {text[:100]}")
+                        return {}
+            except Exception as e:
+                print(f"[Bybit] Request error for {path}: {e}")
+                return {}
 
     async def get_linear_symbols(self):
         """Все перпетуальные пары"""
