@@ -14,7 +14,11 @@ class BybitClient:
     async def start(self):
         self.session = aiohttp.ClientSession()
 
-     async def _get(self, path: str, params: dict = None):
+    async def close(self):
+        if self.session:
+            await self.session.close()
+
+    async def _get(self, path: str, params: dict = None):
         async with self._lock:
             try:
                 async with self.session.get(f"{BYBIT_REST}{path}", params=params or {}, timeout=aiohttp.ClientTimeout(total=15)) as r:
