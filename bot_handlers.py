@@ -19,7 +19,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await get_settings(chat_id)  # создаст дефолт если нет
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Открыть монитор", web_app=WebAppInfo(url=f"https://t.me/{context.bot.username}/pumpdump"))],
+        [InlineKeyboardButton("🚀 Открыть монитор", url=f"https://t.me/{context.bot.username}/pumpdump")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
         [InlineKeyboardButton("📊 Алерты", callback_data="alerts")],
     ])
