@@ -1,15 +1,14 @@
-"""
-Async REST-клиент Bybit v5 (public only)
-Rate-limit-safe: используем один bulk-запрос тикеров
-"""
 import aiohttp
 import asyncio
+import os
 from config import BYBIT_REST
 
 class BybitClient:
     def __init__(self):
         self.session: aiohttp.ClientSession | None = None
         self._lock = asyncio.Lock()
+        # Считываем прокси из переменных окружения
+        self.proxy = os.getenv("PROXY_URL") 
 
     async def start(self):
         self.session = aiohttp.ClientSession()
@@ -21,7 +20,13 @@ class BybitClient:
     async def _get(self, path: str, params: dict = None):
         async with self._lock:
             try:
-                async with self.session.get(f"{BYBIT_REST}{path}", params=params or {}, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                # Добавляем параметр proxy в запрос
+                async with self.session.get(
+                    f"{BYBIT_REST}{path}", 
+                    params=params or {}, 
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    proxy=self.proxy
+                ) as r:
                     if r.status != 200:
                         text = await r.text()
                         print(f"[Bybit] Error {r.status} for {path}: {text[:100]}")
@@ -37,13 +42,12 @@ class BybitClient:
                 print(f"[Bybit] Request error for {path}: {e}")
                 return {}
 
+    # ... (остальные функции get_linear_symbols, get_tickers и т.д. остаются без изменений)
     async def get_linear_symbols(self):
-        """Все перпетуальные пары"""
         res = await self._get("/v5/market/instruments-info", {"category": "linear"})
         return res.get("list", [])
 
     async def get_tickers(self):
-        """Bulk тикеры всех linear (один запрос)"""
         res = await self._get("/v5/market/tickers", {"category": "linear"})
         return res.get("list", [])
 
@@ -54,7 +58,7 @@ class BybitClient:
             "interval": interval,
             "limit": limit,
         })
-        return res.get("list", [])  # [time, open, high, low, close, volume, turnover]
+        return res.get("list", [])
 
     async def get_recent_trade(self, symbol: str, limit: int = 100):
         res = await self._get("/v5/market/recent-trade", {
