@@ -1,23 +1,18 @@
 """
 Точка входа:
 - Инициализация БД
-- Запуск FastAPI (в отдельном thread через uvicorn)
 - Запуск Monitor (asyncio background tasks)
 - Запуск python-telegram-bot polling
 """
 import asyncio
-import threading
 import logging
-from contextlib import asynccontextmanager
 
-import uvicorn
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 
 from config import BOT_TOKEN
 from db import init_db
 from monitor import Monitor
 from bot_handlers import start, alerts_cmd, snapshot_cmd, button_callback, set_monitor
-from web_app import app as fastapi_app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("main")
@@ -38,12 +33,9 @@ async def main():
     set_monitor(monitor)
     await monitor.start()
 
-    # FastAPI в отдельном thread (uvicorn синхронный runner)
-    def run_web():
-        uvicorn.run(fastapi_app, host="0.0.0.0", port=8000, log_level="warning")
-    web_thread = threading.Thread(target=run_web, daemon=True)
-    web_thread.start()
-
+    # Web-сервер отключен, так как Mini App не используется
+    # logger.info("Запуск Web App...")
+    
     # PTB polling (async)
     await application.initialize()
     await application.start()
