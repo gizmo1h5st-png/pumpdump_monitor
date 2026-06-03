@@ -49,7 +49,7 @@ class Monitor:
                 if vol_map.get(sym, 0) >= 100_000:
                     new_symbols.append(sym)
             new_symbols.sort(key=lambda s: vol_map.get(s, 0), reverse=True)
-            self.symbols = new_symbols[:100]
+            self.symbols = new_symbols[:500]
             print(f"[Monitor] Список обновлён: {len(self.symbols)} пар")
         except Exception as e:
             print(f"[Monitor] Ошибка обновления списка: {e}")
