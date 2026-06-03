@@ -1,3 +1,7 @@
+"""
+Async REST-клиент Bybit v5 (public only)
+Поддерживает прокси для обхода блокировок CloudFront.
+"""
 import aiohttp
 import asyncio
 import os
@@ -7,8 +11,9 @@ class BybitClient:
     def __init__(self):
         self.session: aiohttp.ClientSession | None = None
         self._lock = asyncio.Lock()
-        # Считываем прокси из переменных окружения
-        self.proxy = os.getenv("PROXY_URL") 
+        # Считываем прокси из переменной окружения PROXY_URL
+        # Формат: http://user:pass@ip:port
+        self.proxy = os.getenv("PROXY_URL")
 
     async def start(self):
         self.session = aiohttp.ClientSession()
@@ -20,7 +25,7 @@ class BybitClient:
     async def _get(self, path: str, params: dict = None):
         async with self._lock:
             try:
-                # Добавляем параметр proxy в запрос
+                # Передаем прокси в запрос, если он настроен
                 async with self.session.get(
                     f"{BYBIT_REST}{path}", 
                     params=params or {}, 
@@ -42,7 +47,6 @@ class BybitClient:
                 print(f"[Bybit] Request error for {path}: {e}")
                 return {}
 
-    # ... (остальные функции get_linear_symbols, get_tickers и т.д. остаются без изменений)
     async def get_linear_symbols(self):
         res = await self._get("/v5/market/instruments-info", {"category": "linear"})
         return res.get("list", [])
