@@ -48,10 +48,12 @@ class BybitClient:
                 return {}
 
     async def get_linear_symbols(self):
+        """Все перпетуальные пары"""
         res = await self._get("/v5/market/instruments-info", {"category": "linear"})
         return res.get("list", [])
 
     async def get_tickers(self):
+        """Bulk тикеры всех linear (один запрос)"""
         res = await self._get("/v5/market/tickers", {"category": "linear"})
         return res.get("list", [])
 
