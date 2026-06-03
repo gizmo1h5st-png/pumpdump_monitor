@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -32,7 +31,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     s = await get_settings(chat_id)
     
-    # Формируем статус бота
+    # Статистика
     uptime = str(datetime.utcnow() - MONITOR.start_time).split(".")[0]
     last_upd = MONITOR.last_update_time.strftime("%H:%M:%S") if MONITOR.last_update_time else "Н/Д"
     
@@ -61,12 +60,16 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    query = update.callback_query
     rows = await get_alerts(chat_id, limit=5)
     back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")]])
     if not rows:
-        await update.callback_query.edit_message_text("Алертов пока нет.", reply_markup=back_kb)
+        text = "Алертов пока нет."
+        if query: await query.edit_message_text(text, reply_markup=back_kb)
+        else: await update.message.reply_text(text, reply_markup=back_kb)
         return
-    await update.callback_query.message.delete()
+
+    if query: await query.message.delete()
     for r in rows:
         emoji = "🟢" if r['direction'] == "PUMP" else "🔴"
         caption = f"{emoji} <b>{r['direction']}</b> <code>{r['symbol']}</code>\n📈 {r['change_percent']:+.2f}% @ <code>{r['price']:,.2f}</code>"
@@ -85,7 +88,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "main_menu": return await start(update, context)
     if data == "settings": return await settings_callback(update, context)
     if data == "alerts": return await alerts_cmd(update, context)
-    
     if data.startswith("set_thr_"):
         await save_settings(chat_id, {"pump_threshold": float(data.split("_")[-1])})
         return await settings_callback(update, context)
