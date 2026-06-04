@@ -98,3 +98,48 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s = await get_settings(chat_id)
         await save_settings(chat_id, {"paused": 0 if s["paused"] else 1})
         return await settings_callback(update, context)
+
+async def snapshot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Заглушка для совместимости"""
+    await update.message.reply_text("Эта функция временно отключена.")
+
+async def test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тестовый алерт для проверки графика"""
+    chat_id = update.effective_chat.id
+    await update.message.reply_text("⏳ Генерирую тестовый алерт для BTCUSDT...")
+    
+    from bybit_client import BybitClient
+    from chart_builder import build_snapshot
+    
+    client = BybitClient()
+    await client.start()
+    try:
+        sym = "BTCUSDT"
+        settings = await get_settings(chat_id)
+        klines = await client.get_klines(sym, settings["timeframe"], limit=50)
+        trades = await client.get_recent_trade(sym, limit=60)
+        
+        pump_info = {
+            "direction": "PUMP",
+            "change_percent": 2.50,
+            "score": 8
+        }
+        
+        path = build_snapshot(sym, klines, trades, settings, pump_info)
+        
+        if path:
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
+                InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
+            ]])
+            await context.bot.send_photo(
+                chat_id, 
+                photo=open(path, "rb"), 
+                caption=f"🧪 <b>ТЕСТОВЫЙ АЛЕРТ</b>\n\nПара: <code>{sym}</code>\nИзменение: <b>+2.50%</b>",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка теста: {e}")
+    finally:
+        await client.close()
