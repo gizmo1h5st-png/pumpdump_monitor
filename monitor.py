@@ -18,11 +18,11 @@ class Monitor:
         self.running = True
         self._last_alert: dict[str, datetime] = {}
         
-        # Статистика для вывода в боте
         self.start_time = datetime.utcnow()
         self.last_update_time = None
         self.cycles_count = 0
         self.last_error = "Нет"
+        self.recent_activity = deque(maxlen=5) # Последние 5 значимых движений
 
     async def start(self):
         await self.client.start()
@@ -49,10 +49,8 @@ class Monitor:
             new_symbols.sort(key=lambda s: vol_map.get(s, 0), reverse=True)
             self.symbols = new_symbols[:500]
             self.last_update_time = datetime.utcnow()
-            print(f"[Monitor] Список обновлён: {len(self.symbols)} пар")
         except Exception as e:
             self.last_error = str(e)[:50]
-            print(f"[Monitor] Ошибка обновления списка: {e}")
 
     async def _loop_update_symbols(self):
         while self.running:
@@ -86,6 +84,11 @@ class Monitor:
             else: break
         if old_price is None or old_price == 0: return
         change = (price - old_price) / old_price * 100.0
+        
+        # Добавляем в "консоль", если изменение > 1.5%
+        if abs(change) >= 1.5:
+            self.recent_activity.append(f"{now.strftime('%H:%M:%S')} | {sym} | {change:+.2f}%")
+
         if abs(change) >= 5.0:
             direction = "PUMP" if change > 0 else "DUMP"
             last = self._last_alert.get(sym)
@@ -101,37 +104,20 @@ class Monitor:
                 db.row_factory = aiosqlite.Row
                 async with db.execute("SELECT * FROM user_settings") as cur:
                     rows = await cur.fetchall()
-            
             for row in rows:
-                chat_id = row["chat_id"]
-                if row["paused"]: continue
-                if abs(change) < row["pump_threshold"]: continue
-                
-                # Собираем данные и строим график
+                if row["paused"] or abs(change) < row["pump_threshold"]: continue
                 tf = row["timeframe"]
                 klines = await self.client.get_klines(sym, tf, limit=50)
                 trades = await self.client.get_recent_trade(sym, limit=60)
-                
                 path = build_snapshot(sym, klines, trades, dict(row), {
                     "direction": direction, "change_percent": round(change, 2), "score": 7,
                 })
-                
-                await add_alert(chat_id, sym, direction, round(change, 2), price, path)
-                
+                await add_alert(row["chat_id"], sym, direction, round(change, 2), price, path)
                 emoji = "🟢" if direction == "PUMP" else "🔴"
-                caption = (
-                    f"{emoji} <b>{direction} DETECTED!</b>\n\n"
-                    f"Пара: <code>{sym}</code>\n"
-                    f"Изменение: <b>{change:+.2f}%</b> (5m)\n"
-                    f"Цена: <code>{price:,.2f}</code>"
-                )
-                kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
-                    InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
-                ]])
-                await self.bot.bot.send_photo(chat_id, open(path, "rb"), caption=caption, parse_mode="HTML", reply_markup=kb)
-        except Exception as e:
-            print(f"[Alert Error] {e}")
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P")]])
+                await self.bot.bot.send_photo(row["chat_id"], open(path, "rb"), 
+                    caption=f"{emoji} <b>{direction}</b> <code>{sym}</code> {change:+.2f}%", parse_mode="HTML", reply_markup=kb)
+        except Exception: pass
 
     async def _cleanup_loop(self):
         while self.running:
