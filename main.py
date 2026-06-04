@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from config import BOT_TOKEN
 from db import init_db
 from monitor import Monitor
-from bot_handlers import start, alerts_cmd, button_callback, set_monitor
+from bot_handlers import start, alerts_cmd, button_callback, set_monitor, test_alert
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("main")
@@ -27,6 +27,7 @@ async def main():
     # Регистрация команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("alerts", alerts_cmd))
+    application.add_handler(CommandHandler("test", test_alert))
     application.add_handler(CallbackQueryHandler(button_callback))
 
     # Монитор
