@@ -31,29 +31,28 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     s = await get_settings(chat_id)
     
-    # Статистика
     uptime = str(datetime.utcnow() - MONITOR.start_time).split(".")[0]
     last_upd = MONITOR.last_update_time.strftime("%H:%M:%S") if MONITOR.last_update_time else "Н/Д"
     
+    # Консоль активности
+    activity_log = "\n".join(MONITOR.recent_activity) if MONITOR.recent_activity else "Активности пока нет"
+    
     status_text = (
-        f"🖥 <b>СТАТУС СИСТЕМЫ:</b>\n"
-        f"┣ 🟢 Работает (Uptime: <code>{uptime}</code>)\n"
-        f"┣ Пар в мониторинге: <b>{len(MONITOR.symbols)}</b>\n"
-        f"┣ Последнее обновление: <code>{last_upd} UTC</code>\n"
-        f"┣ Циклов проверки: <code>{MONITOR.cycles_count}</code>\n"
-        f"┗ Последняя ошибка: <i>{MONITOR.last_error}</i>\n\n"
-        f"⚙️ <b>ВАШИ НАСТРОЙКИ:</b>\n"
-        f"┣ Порог сигнала: <b>{s['pump_threshold']}%</b>\n"
-        f"┣ Таймфрейм графиков: <b>{s['timeframe']}m</b>\n"
-        f"┗ Уведомления: <b>{'⏸ Пауза' if s['paused'] else '🔔 Активны'}</b>\n\n"
-        f"<i>Нажмите кнопку ниже, чтобы изменить параметры:</i>"
+        f"🖥 <b>СТАТУС:</b> 🟢 OK | <b>Uptime:</b> <code>{uptime}</code>\n"
+        f"┣ Пар: <b>{len(MONITOR.symbols)}</b> | ТФ: <b>{s['timeframe']}m</b>\n"
+        f"┗ Обновление: <code>{last_upd} UTC</code>\n\n"
+        f"📝 <b>ПОСЛЕДНИЕ ДВИЖЕНИЯ (>1.5%):</b>\n"
+        f"<code>{activity_log}</code>\n\n"
+        f"⚙️ <b>ПАРАМЕТРЫ:</b>\n"
+        f"┣ Порог: <b>{s['pump_threshold']}%</b> | Увед: <b>{'⏸ OFF' if s['paused'] else '🔔 ON'}</b>\n"
+        f"┗ Ошибка: <i>{MONITOR.last_error}</i>"
     )
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📉 Порог: 5%", callback_data="set_thr_5"), InlineKeyboardButton("📈 Порог: 10%", callback_data="set_thr_10")],
         [InlineKeyboardButton("🕒 ТФ: 1m", callback_data="tf_1"), InlineKeyboardButton("🕒 ТФ: 5m", callback_data="tf_5")],
         [InlineKeyboardButton("⏯ Пауза / Старт", callback_data="toggle_pause")],
-        [InlineKeyboardButton("🔄 Обновить статус", callback_data="settings")],
+        [InlineKeyboardButton("🔄 Обновить данные", callback_data="settings")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")],
     ])
     await query.edit_message_text(status_text, reply_markup=kb, parse_mode="HTML")
@@ -68,7 +67,6 @@ async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query: await query.edit_message_text(text, reply_markup=back_kb)
         else: await update.message.reply_text(text, reply_markup=back_kb)
         return
-
     if query: await query.message.delete()
     for r in rows:
         emoji = "🟢" if r['direction'] == "PUMP" else "🔴"
