@@ -1,6 +1,6 @@
 """
-Async REST-клиент Bybit v5 (public only)
-Поддерживает прокси для обхода блокировок CloudFront.
+Async REST-клиент Bybit v5
+Работает через Cloudflare Worker Proxy
 """
 import aiohttp
 import asyncio
@@ -11,9 +11,6 @@ class BybitClient:
     def __init__(self):
         self.session: aiohttp.ClientSession | None = None
         self._lock = asyncio.Lock()
-        # Считываем прокси из переменной окружения PROXY_URL
-        # Формат: http://user:pass@ip:port
-        self.proxy = os.getenv("PROXY_URL")
 
     async def start(self):
         self.session = aiohttp.ClientSession()
@@ -25,35 +22,30 @@ class BybitClient:
     async def _get(self, path: str, params: dict = None):
         async with self._lock:
             try:
-                # Передаем прокси в запрос, если он настроен
+                # Теперь BYBIT_REST — это адрес вашего Cloudflare Worker
                 async with self.session.get(
                     f"{BYBIT_REST}{path}", 
                     params=params or {}, 
-                    timeout=aiohttp.ClientTimeout(total=15),
-                    proxy=self.proxy
+                    timeout=aiohttp.ClientTimeout(total=15)
                 ) as r:
                     if r.status != 200:
                         text = await r.text()
-                        print(f"[Bybit] Error {r.status} for {path}: {text[:100]}")
+                        print(f"[Proxy] Error {r.status} for {path}: {text[:100]}")
                         return {}
                     try:
                         data = await r.json()
                         return data.get("result", {})
                     except Exception as e:
-                        text = await r.text()
-                        print(f"[Bybit] JSON error for {path}: {e}. Response: {text[:100]}")
                         return {}
             except Exception as e:
-                print(f"[Bybit] Request error for {path}: {e}")
+                print(f"[Proxy] Request error: {e}")
                 return {}
 
     async def get_linear_symbols(self):
-        """Все перпетуальные пары"""
         res = await self._get("/v5/market/instruments-info", {"category": "linear"})
         return res.get("list", [])
 
     async def get_tickers(self):
-        """Bulk тикеры всех linear (один запрос)"""
         res = await self._get("/v5/market/tickers", {"category": "linear"})
         return res.get("list", [])
 
