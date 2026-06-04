@@ -33,8 +33,6 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     uptime = str(datetime.utcnow() - MONITOR.start_time).split(".")[0]
     last_upd = MONITOR.last_update_time.strftime("%H:%M:%S") if MONITOR.last_update_time else "Н/Д"
-    
-    # Консоль активности
     activity_log = "\n".join(MONITOR.recent_activity) if MONITOR.recent_activity else "Активности пока нет"
     
     status_text = (
@@ -50,9 +48,13 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📉 Порог: 5%", callback_data="set_thr_5"), InlineKeyboardButton("📈 Порог: 10%", callback_data="set_thr_10")],
-        [InlineKeyboardButton("🕒 ТФ: 1m", callback_data="tf_1"), InlineKeyboardButton("🕒 ТФ: 5m", callback_data="tf_5")],
+        [
+            InlineKeyboardButton("🕒 1m", callback_data="tf_1"), 
+            InlineKeyboardButton("🕒 5m", callback_data="tf_5"), 
+            InlineKeyboardButton("🕒 15m", callback_data="tf_15")
+        ],
         [InlineKeyboardButton("⏯ Пауза / Старт", callback_data="toggle_pause")],
-        [InlineKeyboardButton("🔄 Обновить данные", callback_data="settings")],
+        [InlineKeyboardButton("🔄 Обновить статус", callback_data="settings")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")],
     ])
     await query.edit_message_text(status_text, reply_markup=kb, parse_mode="HTML")
