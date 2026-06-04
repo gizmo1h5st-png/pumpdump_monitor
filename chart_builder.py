@@ -1,178 +1,93 @@
-"""
-Графики: mplfinance + matplotlib overlays (FVG, OB, зона интереса, лоты, VARIABLES)
-"""
 import os
-import io
-import base64
-import numpy as np
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import mplfinance as mpf
-from matplotlib.patches import Rectangle
 from datetime import datetime
 
 os.makedirs("/tmp/snapshots", exist_ok=True)
 
 def klines_to_df(klines):
-    """Bybit kline: [time, open, high, low, close, volume, turnover]"""
     df = pd.DataFrame(klines, columns=["t","open","high","low","close","volume","turnover"])
     df = df.astype(float)
     df["date"] = pd.to_datetime(df["t"], unit="ms")
     df.set_index("date", inplace=True)
-    df = df.iloc[::-1]
-    return df
-
-def calc_atr(df, period=14):
-    hl = df["high"] - df["low"]
-    hc = (df["high"] - df["close"].shift()).abs()
-    lc = (df["low"] - df["close"].shift()).abs()
-    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
-    return float(tr.rolling(period).mean().iloc[-1]) if len(df) >= period else 0.0
-
-def find_fvg(df):
-    zones = []
-    for i in range(2, len(df)):
-        if df["low"].iloc[i] > df["high"].iloc[i-2]:
-            zones.append({"type":"bull","top":df["low"].iloc[i],"bot":df["high"].iloc[i-2],"i":i})
-        elif df["high"].iloc[i] < df["low"].iloc[i-2]:
-            zones.append({"type":"bear","top":df["low"].iloc[i-2],"bot":df["high"].iloc[i],"i":i})
-    last_high, last_low = df["high"].iloc[-1], df["low"].iloc[-1]
-    live = [z for z in zones if not (last_low <= z["top"] and last_high >= z["bot"])]
-    return live
-
-def find_obs(df, atr, mult=1.5):
-    obs = []
-    avg_vol = df["volume"].rolling(20).mean()
-    for i in range(1, len(df)-1):
-        body = abs(df["close"].iloc[i] - df["open"].iloc[i])
-        if body >= atr * mult and df["volume"].iloc[i] > avg_vol.iloc[i] * 1.2:
-            obs.append({
-                "type": "bull" if df["close"].iloc[i] > df["open"].iloc[i] else "bear",
-                "open": df["open"].iloc[i], "close": df["close"].iloc[i],
-                "high": df["high"].iloc[i], "low": df["low"].iloc[i], "i": i
-            })
-    return obs
+    return df.iloc[::-1]
 
 def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict = None) -> str:
-    """
-    Строит PNG и возвращает путь.
-    pumpdump_info: {direction, change_percent, score, fvg_count, ob_count, vol_mult}
-    """
     if not klines or len(klines) < 20:
         return ""
 
     df = klines_to_df(klines)
-    atr = calc_atr(df)
-    last_close = float(df["close"].iloc[-1])
-    zone_pct = settings.get("zone_pct", 2.0) / 100.0
-
-    # FVG / OB
-    fvg_zones = find_fvg(df)
-    ob_zones = find_obs(df, atr, settings.get("ob_mult", 1.5))
-
-    # Главный график
-    title = f"{symbol}  @  {last_close:,.2f}"
-    if pumpdump_info:
-        title += f"  |  {pumpdump_info['direction']}  {pumpdump_info['change_percent']:+.2f}%"
-
-    fig, axes = mpf.plot(df, type="candle", style="binance", returnfig=True,
-                         title=title,
-                         ylabel="Price (USDT)", volume=True,
-                         figsize=(12, 8), tight_layout=True,
-                         mav=(9, 21))
-
-    ax = axes[0]
-    ax_vol = axes[2] if len(axes) > 2 else None
-
-    # Зона интереса ±%
-    ax.axhspan(last_close*(1-zone_pct), last_close*(1+zone_pct), color="gray", alpha=0.06)
-
-    # FVG зоны
-    for z in fvg_zones:
-        color = "lime" if z["type"]=="bull" else "magenta"
-        x_idx = z["i"]
-        rect = Rectangle((x_idx-0.4, z["bot"]), 0.8, z["top"]-z["bot"],
-                         facecolor=color, alpha=0.22, edgecolor=color, linewidth=1.5)
-        ax.add_patch(rect)
-
-    # OB прямоугольники
-    for ob in ob_zones:
-        color = "green" if ob["type"]=="bull" else "red"
-        x_idx = ob["i"]
-        rect = Rectangle((x_idx-0.45, ob["low"]), 0.9, ob["high"]-ob["low"],
-                         facecolor=color, alpha=0.18, edgecolor=color, linewidth=2)
-        ax.add_patch(rect)
-
-    # Крупные лоты (разметка)
+    
+    # --- 1. РАСЧЕТ ДЕЛЬТЫ ОБЪЕМА ---
+    # Создаем пустую серию для дельты
+    df['delta'] = 0.0
     if trades:
-        thr = settings.get("lot_threshold", 10.0)
-        for idx, t in enumerate(trades[-20:]):  # последние 20 сделок
-            qty = float(t.get("size", 0))
-            if qty >= thr:
-                side = t.get("side", "Buy")
-                price = float(t.get("price", 0))
-                x_pos = len(df) - 20 + idx
-                color = "#00ff00" if side == "Buy" else "#ff3333"
-                sign = "+" if side == "Buy" else "-"
-                ax.annotate(f"{sign}{qty:.1f}", xy=(x_pos, price), color=color, fontsize=7, fontweight="bold")
-
-    # === VARIABLES OVERLAY (все показатели на графике) ===
-    if pumpdump_info:
-        # Фоновый прямоугольник для читаемости
-        info_text = (
-            f"SCORE: {pumpdump_info.get('score', 'N/A')}/10\n"
-            f"DIR:   {pumpdump_info['direction']}\n"
-            f"CHG:   {pumpdump_info['change_percent']:+.2f}%\n"
-            f"FVG:   {pumpdump_info.get('fvg_count', len(fvg_zones))} zones\n"
-            f"OB:    {pumpdump_info.get('ob_count', len(ob_zones))} blocks\n"
-            f"VOL:   {pumpdump_info.get('vol_mult', 0):.1f}x SMA\n"
-            f"ATR:   {atr:.2f}\n"
-            f"ZONE:  ±{settings.get('zone_pct', 2.0)}%"
-        )
-        # Размещаем в левом верхнем углу
-        ax.text(0.02, 0.98, info_text,
-                transform=ax.transAxes,
-                fontsize=9, color="white", family="monospace",
-                verticalalignment="top", horizontalalignment="left",
-                bbox=dict(boxstyle="round,pad=0.4", facecolor="#1e2329", edgecolor="#f0b90b", alpha=0.95, linewidth=1.5))
-
-    # Покупка/продажа лотов (правый верхний угол)
-    buy_lots = 0.0
-    sell_lots = 0.0
-    if trades:
+        # Пытаемся распределить сделки по свечам для отрисовки нижней панели
         for t in trades:
-            qty = float(t.get("size", 0))
-            side = t.get("side", "Buy")
-            if side == "Buy":
-                buy_lots += qty
-            else:
-                sell_lots += qty
-    ax.text(0.98, 0.98, f"Покупка: {buy_lots:.1f} лотов  |  Продажа: {sell_lots:.1f} лотов",
-            transform=ax.transAxes, fontsize=9, color="white",
-            ha="right", va="top",
-            bbox=dict(boxstyle="round,pad=0.35", facecolor="#1e2329", edgecolor="#f0b90b", linewidth=1.2, alpha=0.95))
+            t_time = pd.to_datetime(float(t['time']), unit='ms')
+            qty = float(t['size'])
+            side = 1 if t['side'] == 'Buy' else -1
+            # Находим ближайшую свечу
+            idx = df.index.get_indexer([t_time], method='pad')[0]
+            if idx != -1:
+                df.iloc[idx, df.columns.get_loc('delta')] += (qty * side)
 
-    # Водяной знак
-    ax.text(0.5, 0.02, f"{symbol} | Pump&Dump Monitor | {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-            transform=ax.transAxes, fontsize=9, color="gray", alpha=0.6, ha="center")
+    # --- 2. ПОИСК "ЗОЛОТОЙ ЛИНИИ" (Крупная заявка/сопротивление) ---
+    max_vol_idx = df['volume'].idxmax()
+    resistance_price = df.loc[max_vol_idx, 'high']
+    max_vol_usd = (df['volume'].max() * resistance_price) / 1000 # в тыс $
 
-    # Стрелка + подпись если PUMP/DUMP
+    # --- 3. НАСТРОЙКА СТИЛЯ ---
+    colors = mpf.make_marketcolors(up='#00ff41', down='#ff3131', inherit=True, volume='in', edge='inherit')
+    s = mpf.make_mpf_style(base_mpf_style='charles', marketcolors=colors, 
+                           facecolor='#0b0e11', edgecolor='#444', gridcolor='#222', 
+                           gridstyle='dotted', rc={'font.size': 8, 'axes.labelcolor': 'white', 'xtick.color': 'gray', 'ytick.color': 'gray'})
+
+    # Создаем дополнительные графики (Дельта)
+    delta_plot = mpf.make_addplot(df['delta'], panel=2, type='bar', color=['#00ff41' if x > 0 else '#ff3131' for x in df['delta']], width=0.7)
+
+    # Подготовка текста для золотой метки
+    title_text = f"{symbol}  {pumpdump_info['change_percent'] if pumpdump_info else ''}%"
+    
+    # --- 4. ОТРИСОВКА ---
+    fig, axlist = mpf.plot(
+        df, type='candle', style=s,
+        volume=True, addplot=[delta_plot],
+        figsize=(12, 8), returnfig=True,
+        panel_ratios=(4, 1, 1), # Пропорции панелей
+        tight_layout=True,
+        datetime_format='%H:%M',
+        xrotation=0
+    )
+
+    ax_main = axlist[0]
+    ax_vol = axlist[2]
+    ax_delta = axlist[4]
+
+    # Добавляем Золотую линию (Заявка)
+    ax_main.axhline(y=resistance_price, color='#f0b90b', linestyle='-', linewidth=1.5, alpha=0.8)
+    
+    # Текст над золотой линией (как на скрине)
+    ax_main.text(0.5, resistance_price, f"{max_vol_usd:.0f}k$ F {resistance_price:.6f}", 
+                 color='black', fontsize=8, fontweight='bold', ha='center', va='center',
+                 bbox=dict(boxstyle="round,pad=0.2", facecolor='#f0b90b', edgecolor='#f0b90b'))
+
+    # Добавляем плашку Buy/Sell справа
     if pumpdump_info:
-        start_i = max(0, len(df) - 8)
-        end_i = len(df) - 1
-        start_price = float(df["close"].iloc[start_i])
-        end_price = last_close
-        ax.annotate("", xy=(end_i, end_price), xytext=(start_i, start_price),
-                    arrowprops=dict(arrowstyle="->", color="#f0b90b", lw=2.5))
-        mid_price = (start_price + end_price) / 2
-        mid_i = (start_i + end_i) / 2
-        ax.text(mid_i, mid_price, f"{pumpdump_info['change_percent']:+.2f}%",
-                color="#f0b90b", fontsize=14, fontweight="bold", ha="center",
-                bbox=dict(boxstyle="round,pad=0.25", facecolor="#0b0e11", edgecolor="#f0b90b", alpha=0.9))
+        side_color = '#00ff41' if pumpdump_info['direction'] == 'PUMP' else '#ff3131'
+        ax_main.text(1.02, 0.5, pumpdump_info['direction'], transform=ax_main.transAxes,
+                     color='white', fontweight='bold', bbox=dict(facecolor=side_color, edgecolor='none', boxstyle='round,pad=0.3'))
+
+    # Надписи ТФ
+    ax_main.text(0.95, 0.95, f"TF: {settings.get('timeframe', '5')}m", transform=ax_main.transAxes, color='white', ha='right')
+    ax_main.set_title(title_text, color='white', loc='left', fontsize=12, fontweight='bold')
 
     # Сохранение
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    path = f"/tmp/snapshots/{symbol.replace('/', '_')}_{ts}.png"
-    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="#0b0e11")
+    path = f"/tmp/snapshots/{symbol}_{ts}.png"
+    fig.savefig(path, dpi=120, facecolor='#0b0e11')
     plt.close(fig)
+    
     return path
