@@ -24,6 +24,10 @@ async def init_db():
                 fvg_enabled INTEGER DEFAULT 1,
                 lot_threshold REAL DEFAULT 10.0,
                 paused INTEGER DEFAULT 0,
+                theme TEXT DEFAULT 'dark',
+                show_delta INTEGER DEFAULT 1,
+                show_oi INTEGER DEFAULT 1,
+                show_liq INTEGER DEFAULT 1,
                 updated_at TEXT
             )
         """)
@@ -69,12 +73,17 @@ async def get_settings(chat_id: int) -> dict:
                 "fvg_enabled": 1,
                 "lot_threshold": 10.0,
                 "paused": 0,
+                "theme": "dark",
+                "show_delta": 1,
+                "show_oi": 1,
+                "show_liq": 1,
                 "updated_at": datetime.utcnow().isoformat(),
             }
             await db.execute("""
                 INSERT INTO user_settings (chat_id, timeframe, pump_threshold, volume_min_usd,
-                    zone_pct, ob_mult, volume_delta_mult, fvg_enabled, lot_threshold, paused, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    zone_pct, ob_mult, volume_delta_mult, fvg_enabled, lot_threshold, paused, theme, 
+                    show_delta, show_oi, show_liq, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, tuple(d.values()))
             await db.commit()
             return d
