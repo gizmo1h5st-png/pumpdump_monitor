@@ -30,26 +30,17 @@ def klines_to_df(klines):
     return df
 
 def calculate_reversal_score(df):
-    """Кластерный анализ вероятности разворота (0-100%)"""
     last = df.iloc[-1]
     prev = df.iloc[-2]
-    
-    score = 15 # Базовая волатильность
-    
-    # 1. Дивергенция Дельты (Цена вверх, дельта вниз)
+    score = 15 
     if (last['close'] > last['open'] and last['delta'] < 0) or (last['close'] < last['open'] and last['delta'] > 0):
         score += 35
-        
-    # 2. Поглощение в тенях (Длинная верхняя тень на объеме при пампе)
     upper_shadow = last['high'] - max(last['close'], last['open'])
     body = abs(last['close'] - last['open'])
     if last['volume'] > last['vol_sma'] * 1.5 and upper_shadow > body:
         score += 30
-        
-    # 3. Истощение (Объем падает, цена еще идет по инерции)
     if last['volume'] < prev['volume'] * 0.7 and abs(last['close'] - prev['close']) > abs(prev['close'] - df.iloc[-3]['close']):
         score += 20
-
     return min(score, 99)
 
 def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict = None) -> str:
@@ -62,7 +53,6 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
     res_price = df.loc[max_vol_idx, 'high']
     max_vol_usd = (df['volume'].max() * res_price) / 1000 
 
-    # Темы
     is_dark = settings.get("theme", "dark") == "dark"
     bg_color = '#0b0e11' if is_dark else '#ffffff'
     text_color = '#888' if is_dark else '#333'
@@ -73,20 +63,33 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
                            edgecolor='#222', gridcolor=grid_color, gridstyle='solid',
                            rc={'font.size': 8, 'axes.labelcolor': text_color, 'xtick.color': '#555', 'ytick.color': '#888'})
 
+    # --- ЛОГИКА ПАНЕЛЕЙ ---
     ap = []
-    ratios = [4, 1]
+    ratios = [4, 1] # 0: Свечи, 1: Объем (Built-in)
+    current_panel = 2
+    
+    # 1. Delta
     if settings.get('show_delta', 1):
-        ap.append(mpf.make_addplot(df['delta'], panel=len(ap)+1, type='bar', color=['#00ff41' if x > 0 else '#ff3131' for x in df['delta']], width=0.8, ylabel='Delta'))
+        ap.append(mpf.make_addplot(df['delta'], panel=current_panel, type='bar', color=['#00ff41' if x > 0 else '#ff3131' for x in df['delta']], width=0.8, ylabel='Delta'))
         ratios.append(1)
+        current_panel += 1
+        
+    # 2. Open Interest
     if settings.get('show_oi', 1):
-        ap.append(mpf.make_addplot(df['oi_close'], panel=len(ap)+1, type='line', color='#00ff41', width=1, ylabel='OI'))
+        ap.append(mpf.make_addplot(df['oi_close'], panel=current_panel, type='line', color='#00ff41', width=1, ylabel='OI'))
         ratios.append(1)
+        current_panel += 1
+        
+    # 3. CVD/Liquidations
     if settings.get('show_liq', 1):
-        p_idx = len(ap)+1
-        ap.append(mpf.make_addplot(df['cvd'], panel=p_idx, type='line', color='#ff00ff', width=1, ylabel='Liq'))
-        ap.append(mpf.make_addplot(df['liq_long'], panel=p_idx, type='bar', color='#00ff41', width=0.7))
-        ap.append(mpf.make_addplot(df['liq_short'], panel=p_idx, type='bar', color='#ff3131', width=0.7))
+        ap.append(mpf.make_addplot(df['cvd'], panel=current_panel, type='line', color='#ff00ff', width=1, ylabel='Liq'))
+        ap.append(mpf.make_addplot(df['liq_long'], panel=current_panel, type='bar', color='#00ff41', width=0.7))
+        ap.append(mpf.make_addplot(df['liq_short'], panel=current_panel, type='bar', color='#ff3131', width=0.7))
         ratios.append(1.5)
+        current_panel += 1
+
+    # Добавляем SMA 9 на панель объема (панель 1)
+    ap.append(mpf.make_addplot(df['vol_sma'], panel=1, color='#00d2ff', width=0.8))
 
     fig, axlist = mpf.plot(df, type='candle', style=s, volume=True, addplot=ap, figsize=(12, 12),
                            returnfig=True, panel_ratios=tuple(ratios), datetime_format='%H:%M', tight_layout=True)
@@ -105,11 +108,24 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
     ax_main.text(1.01, current_price, f"{current_price:.6f}", transform=ax_main.get_yaxis_transform(),
                  color='black' if not is_dark else 'white', fontweight='bold', bbox=dict(fc='#00ff41', ec='none'))
 
-    # РАЗВОРОТНЫЙ ПАТТЕРН ТЕКСТ (внизу)
+    # Заголовки панелей
+    axlist[2].set_title("<Bybit> Volume SMA 9", color=text_color, loc='left', fontsize=7)
+    
+    # Динамические заголовки
+    idx = 4
+    if settings.get('show_delta', 1):
+        axlist[idx].set_title("<CoinGlass> Cumulative Volume Delta (CVD)", color=text_color, loc='left', fontsize=7)
+        idx += 2
+    if settings.get('show_oi', 1):
+        axlist[idx].set_title("<CoinGlass> Open Interest (OI)", color=text_color, loc='left', fontsize=7)
+        idx += 2
+    if settings.get('show_liq', 1):
+        axlist[idx].set_title("<CoinGlass> Aggregate Liquidations", color=text_color, loc='left', fontsize=7)
+
+    # РАЗВОРОТНЫЙ ПАТТЕРН
     plt.figtext(0.5, 0.01, f"РАЗВОРОТНЫЙ ПАТТЕРН - {rev_probability}%", ha="center", fontsize=14, 
                 fontweight='bold', color='#f0b90b', bbox=dict(facecolor='#1e2329', alpha=0.8, edgecolor='#f0b90b', pad=5))
 
-    # Сохранение
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     path = f"/tmp/snapshots/{symbol}_{ts}.png"
     fig.savefig(path, dpi=130, facecolor=bg_color)
