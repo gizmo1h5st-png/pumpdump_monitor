@@ -17,13 +17,13 @@ class Monitor:
         self.snap_sem = asyncio.Semaphore(MAX_CONCURRENT_SNAPS)
         self.running = True
         self._last_alert: dict[str, datetime] = {}
+        self.alert_counts: dict[str, int] = {} # Счетчик сигналов для каждой пары
         
-        # Статистика для вывода в боте
         self.start_time = datetime.utcnow()
         self.last_update_time = None
         self.cycles_count = 0
         self.last_error = "Нет"
-        self.recent_activity = deque(maxlen=5) # Последние 5 значимых движений
+        self.recent_activity = deque(maxlen=5)
 
     async def start(self):
         await self.client.start()
@@ -41,9 +41,6 @@ class Monitor:
             instruments = await self.client.get_linear_symbols()
             tickers = await self.client.get_tickers()
             vol_map = {t["symbol"]: float(t.get("turnover24h", 0)) for t in tickers}
-            
-            # Берем минимальный порог из всех пользователей (для оптимизации мониторинга)
-            # Но для простоты мониторим топ 500 по ликвидности
             new_symbols = []
             for inst in instruments:
                 sym = inst["symbol"]
@@ -53,10 +50,8 @@ class Monitor:
             new_symbols.sort(key=lambda s: vol_map.get(s, 0), reverse=True)
             self.symbols = new_symbols[:500]
             self.last_update_time = datetime.utcnow()
-            print(f"[Monitor] Список обновлён: {len(self.symbols)} пар")
         except Exception as e:
             self.last_error = str(e)[:50]
-            print(f"[Monitor] Ошибка обновления списка: {e}")
 
     async def _loop_update_symbols(self):
         while self.running:
@@ -97,11 +92,21 @@ class Monitor:
         if abs(change) >= 5.0:
             direction = "PUMP" if change > 0 else "DUMP"
             last = self._last_alert.get(sym)
+            
+            # Дедупликация: не чаще раза в 10 минут
             if last and (now - last) < timedelta(minutes=10): return
+            
+            # Логика счетчика сигналов
+            if last and (now - last) < timedelta(hours=1):
+                self.alert_counts[sym] = self.alert_counts.get(sym, 0) + 1
+            else:
+                self.alert_counts[sym] = 1
+            
+            signal_num = self.alert_counts[sym]
             self._last_alert[sym] = now
-            await self._fire_alert(sym, direction, change, price)
+            await self._fire_alert(sym, direction, change, price, signal_num)
 
-    async def _fire_alert(self, sym: str, direction: str, change: float, price: float):
+    async def _fire_alert(self, sym: str, direction: str, change: float, price: float, signal_num: int):
         from db import DB_PATH, add_alert
         import aiosqlite
         try:
@@ -111,11 +116,7 @@ class Monitor:
                     rows = await cur.fetchall()
             
             for row in rows:
-                chat_id = row["chat_id"]
                 if abs(change) < row["pump_threshold"]: continue
-                
-                # Фильтр по объему из настроек пользователя
-                # (Для этого нужно было бы хранить vol_map, но пока используем общий фильтр монитора)
                 
                 tf = row["timeframe"]
                 klines = await self.client.get_klines(sym, tf, limit=50)
@@ -125,11 +126,12 @@ class Monitor:
                     "direction": direction, "change_percent": round(change, 2), "score": 7,
                 })
                 
-                await add_alert(chat_id, sym, direction, round(change, 2), price, path)
+                await add_alert(row["chat_id"], sym, direction, round(change, 2), price, path)
                 
                 emoji = "🟢" if direction == "PUMP" else "🔴"
+                # Добавляем Номер Сигнала в текст
                 caption = (
-                    f"{emoji} <b>{direction} DETECTED!</b>\n\n"
+                    f"{emoji} <b>{direction} (Сигнал №{signal_num})</b>\n\n"
                     f"Пара: <code>{sym}</code>\n"
                     f"Изменение: <b>{change:+.2f}%</b> (5m)\n"
                     f"Цена: <code>{price:,.2f}</code>\n"
@@ -139,7 +141,7 @@ class Monitor:
                     InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
                     InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
                 ]])
-                await self.bot.bot.send_photo(chat_id, open(path, "rb"), caption=caption, parse_mode="HTML", reply_markup=kb)
+                await self.bot.bot.send_photo(row["chat_id"], open(path, "rb"), caption=caption, parse_mode="HTML", reply_markup=kb)
         except Exception as e:
             print(f"[Alert Error] {e}")
 
