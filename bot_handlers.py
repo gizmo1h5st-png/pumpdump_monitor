@@ -41,7 +41,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"┗ Обновление: <code>{last_upd} UTC</code>\n\n"
         f"📝 <b>ПОСЛЕДНИЕ ДВИЖЕНИЯ (>1.5%):</b>\n"
         f"<code>{activity_log}</code>\n\n"
-        f"⚙️ <b>ОСНОВНЫЕ ПАРАМЕТРЫ:</b>\n"
+        f"⚙️ <b>ПАРАМЕТРЫ:</b>\n"
         f"┣ Порог: <b>{s['pump_threshold']}%</b> | Увед: <b>{'⏸ OFF' if s['paused'] else '🔔 ON'}</b>\n"
         f"┣ Тема: <b>{s['theme'].upper()}</b>\n"
         f"┗ Индикаторы: <b>{'📈' if s['show_delta'] else '⬜'}Delta {'📈' if s['show_oi'] else '⬜'}OI {'📈' if s['show_liq'] else '⬜'}Liq</b>\n"
@@ -51,9 +51,9 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Порог: 5%", callback_data="set_thr_5"), InlineKeyboardButton("📈 Порог: 10%", callback_data="set_thr_10")],
         [InlineKeyboardButton("🕒 1m", callback_data="tf_1"), InlineKeyboardButton("🕒 5m", callback_data="tf_5"), InlineKeyboardButton("🕒 15m", callback_data="tf_15")],
         [InlineKeyboardButton("🎨 Тема: DARK", callback_data="set_theme_dark"), InlineKeyboardButton("🎨 Тема: LIGHT", callback_data="set_theme_light")],
-        [InlineKeyboardButton("⏸ Пауза / Старт", callback_data="toggle_pause")],
         [InlineKeyboardButton("📊 Настройка панелей", callback_data="indicator_settings")],
-        [InlineKeyboardButton("🛠 Доп. настройки", callback_data="expert_settings")],
+        [InlineKeyboardButton("🛠 Фильтры объема", callback_data="expert_settings")],
+        [InlineKeyboardButton("⏸ Пауза / Старт", callback_data="toggle_pause")],
         [InlineKeyboardButton("🔄 Обновить статус", callback_data="settings")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")],
     ])
@@ -63,11 +63,8 @@ async def indicator_settings_callback(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     chat_id = update.effective_chat.id
     s = await get_settings(chat_id)
-    
-    text = "📊 <b>НАСТРОЙКА ИНДИКАТОРОВ НА ГРАФИКЕ:</b>\nВыберите, какие панели отображать в уведомлении."
-    
+    text = "📊 <b>НАСТРОЙКА ПАНЕЛЕЙ:</b>"
     def btn_txt(label, val): return f"{'✅' if val else '❌'} {label}"
-    
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(btn_txt("Delta Volume", s['show_delta']), callback_data="toggle_ind_delta")],
         [InlineKeyboardButton(btn_txt("Open Interest", s['show_oi']), callback_data="toggle_ind_oi")],
@@ -80,18 +77,13 @@ async def expert_settings_callback(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     chat_id = update.effective_chat.id
     s = await get_settings(chat_id)
-    
     text = (
-        f"🛠 <b>ЭКСПЕРТНЫЕ НАСТРОЙКИ:</b>\n\n"
+        f"🛠 <b>ФИЛЬТРЫ ОБЪЕМА:</b>\n\n"
         f"┣ Мин. объем (24ч): <b>${s['volume_min_usd']:,.0f}</b>\n"
-        f"┣ Порог лотов: <b>{s['lot_threshold']}</b>\n"
-        f"┣ Зона интереса: <b>±{s['zone_pct']}%</b>\n"
-        f"┗ Множитель OB: <b>{s['ob_mult']}x</b>"
+        f"┗ <i>Бот игнорирует монеты с объемом ниже этого порога.</i>"
     )
-    
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 Vol: 100k", callback_data="set_vol_100000"), InlineKeyboardButton("💰 Vol: 1M", callback_data="set_vol_1000000")],
-        [InlineKeyboardButton("📦 Lots: 5", callback_data="set_lots_5"), InlineKeyboardButton("📦 Lots: 50", callback_data="set_lots_50")],
+        [InlineKeyboardButton("💰 100k", callback_data="set_vol_100000"), InlineKeyboardButton("💰 1M", callback_data="set_vol_1000000")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="settings")],
     ])
     await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
@@ -145,24 +137,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("set_vol_"):
         await save_settings(chat_id, {"volume_min_usd": float(data.split("_")[-1])})
         return await expert_settings_callback(update, context)
-    elif data.startswith("set_lots_"):
-        await save_settings(chat_id, {"lot_threshold": float(data.split("_")[-1])})
-        return await expert_settings_callback(update, context)
     elif data == "toggle_pause":
         s = await get_settings(chat_id)
         await save_settings(chat_id, {"paused": 0 if s["paused"] else 1})
         return await settings_callback(update, context)
 
-async def snapshot_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Эта функция временно отключена.")
-
 async def test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text("⏳ Генерирую тестовый алерт...")
-    
     from bybit_client import BybitClient
     from chart_builder import build_snapshot
-    
     client = BybitClient()
     await client.start()
     try:
@@ -172,16 +156,8 @@ async def test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
         trades = await client.get_recent_trade(sym, limit=60)
         pump_info = {"direction": "PUMP", "change_percent": 2.50, "score": 8}
         path = build_snapshot(sym, klines, trades, settings, pump_info)
-        
         if path:
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
-                InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
-            ]])
-            await context.bot.send_photo(chat_id, photo=open(path, "rb"), 
-                caption=f"🧪 <b>ТЕСТОВЫЙ АЛЕРТ</b>\nТема: {settings['theme'].upper()}\nИндикаторы: {'+'.join([k for k in ['delta','oi','liq'] if settings['show_'+k]])}", 
-                parse_mode="HTML", reply_markup=kb)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
-    finally:
-        await client.close()
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P")]])
+            await context.bot.send_photo(chat_id, open(path, "rb"), caption=f"🧪 <b>ТЕСТОВЫЙ АЛЕРТ</b>", parse_mode="HTML", reply_markup=kb)
+    except Exception as e: await update.message.reply_text(f"❌ Ошибка: {e}")
+    finally: await client.close()
