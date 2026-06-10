@@ -15,16 +15,15 @@ def klines_to_df(klines):
     df.set_index("date", inplace=True)
     df = df.iloc[::-1]
     
-    # Эмуляция дельты на основе свечей (Buyer Volume vs Seller Volume)
-    # Используем простую модель: (Close - Low) / (High - Low) * Volume
+    # Эмуляция дельты (Buy vs Sell)
     df['delta'] = ((df['close'] - df['low']) / (df['high'] - df['low']).replace(0, 1)) * df['volume']
-    df['delta'] = df['delta'] - (df['volume'] / 2) # Центрируем
+    df['delta'] = df['delta'] - (df['volume'] / 2)
     
-    # Кумулятивная дельта (Ликвидация/CVD)
+    # CVD (Cumulative Volume Delta) - Накопленная ликвидность
     df['cvd'] = df['delta'].cumsum()
     
-    # Открытый интерес (OI) - эмулируем на основе turnover/volume для визуализации уровня интереса
-    df['oi'] = df['turnover'].rolling(window=3).mean()
+    # Уровень интереса (OI)
+    df['oi'] = df['turnover'].rolling(window=3).mean().fillna(df['turnover'])
     
     return df
 
@@ -34,7 +33,7 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
 
     df = klines_to_df(klines)
     
-    # Золотая линия (сопротивление по макс объему)
+    # Золотая линия
     max_vol_idx = df['volume'].idxmax()
     res_price = df.loc[max_vol_idx, 'high']
     max_vol_usd = (df['volume'].max() * res_price) / 1000 
@@ -48,13 +47,11 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
     )
 
     # --- ДОПОЛНИТЕЛЬНЫЕ ПАНЕЛИ ---
+    # Заменяем 'area' на 'line', так как 'area' не поддерживается валидатором mplfinance
     ap = [
-        # 1. Дельта объема (полная)
         mpf.make_addplot(df['delta'], panel=2, type='bar', color=['#00ff41' if x > 0 else '#ff3131' for x in df['delta']], width=0.8, ylabel='Delta'),
-        # 2. Уровень интереса (OI)
-        mpf.make_addplot(df['oi'], panel=3, type='line', color='#f0b90b', width=1, ylabel='OI'),
-        # 3. Ликвидации/CVD
-        mpf.make_addplot(df['cvd'], panel=4, type='area', color='#3d5afe', alpha=0.3, ylabel='CVD')
+        mpf.make_addplot(df['oi'], panel=3, type='line', color='#f0b90b', width=1.5, ylabel='Interest'),
+        mpf.make_addplot(df['cvd'], panel=4, type='line', color='#3d5afe', width=1.5, ylabel='CVD')
     ]
 
     title_text = f"{symbol}  {pumpdump_info['change_percent'] if pumpdump_info else ''}%"
@@ -63,8 +60,8 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
     fig, axlist = mpf.plot(
         df, type='candle', style=s,
         volume=True, addplot=ap,
-        figsize=(12, 10), returnfig=True,
-        panel_ratios=(4, 1, 1, 1, 1), # 5 панелей
+        figsize=(12, 11), returnfig=True,
+        panel_ratios=(4, 1, 1, 1, 1),
         datetime_format='%H:%M',
         xrotation=0,
         tight_layout=True
@@ -74,6 +71,12 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
     ax_main.yaxis.tick_right()
     ax_main.yaxis.set_label_position("right")
     
+    # Добавляем заливку для CVD (панель 4, индексы в axlist идут через один для доп. графиков)
+    # axlist[8] соответствует панели 4 в данном случае
+    if len(axlist) > 8:
+        ax_cvd = axlist[8]
+        ax_cvd.fill_between(range(len(df)), df['cvd'], color='#3d5afe', alpha=0.2)
+
     # Золотая линия
     ax_main.axhline(y=res_price, color='#f0b90b', linestyle='-', linewidth=2, alpha=0.8)
     ax_main.text(0.5, res_price, f" {max_vol_usd:.0f}k$ F {res_price:.6f} ", 
