@@ -137,10 +137,15 @@ class Monitor:
                     f"Цена: <code>{price:,.2f}</code>\n"
                     f"Тема: <code>{row['theme'].upper()}</code>"
                 )
-                kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
-                    InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
-                ]])
+                kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
+                        InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
+                    ],
+                    [
+                        InlineKeyboardButton("🔥 Liquidation Heatmap", url=f"https://www.coinglass.com/pro/liquidation/{sym}")
+                    ]
+                ])
                 await self.bot.bot.send_photo(row["chat_id"], open(path, "rb"), caption=caption, parse_mode="HTML", reply_markup=kb)
         except Exception as e:
             print(f"[Alert Error] {e}")
