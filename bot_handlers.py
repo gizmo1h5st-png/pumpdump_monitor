@@ -102,7 +102,15 @@ async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for r in rows:
         emoji = "🟢" if r['direction'] == "PUMP" else "🔴"
         caption = f"{emoji} <b>{r['direction']}</b> <code>{r['symbol']}</code>\n📈 {r['change_percent']:+.2f}% @ <code>{r['price']:,.2f}</code>"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{r['symbol']}.P")]])
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{r['symbol']}.P"),
+                InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{r['symbol']}")
+            ],
+            [
+                InlineKeyboardButton("🔥 Liquidation Heatmap", url=f"https://www.coinglass.com/pro/liquidation/{r['symbol']}")
+            ]
+        ])
         if r["screenshot_path"] and os.path.exists(r["screenshot_path"]):
             await context.bot.send_photo(chat_id, photo=open(r["screenshot_path"], "rb"), caption=caption, parse_mode="HTML", reply_markup=kb)
     await context.bot.send_message(chat_id, "Выше последние 5 алертов.", reply_markup=back_kb)
@@ -157,7 +165,15 @@ async def test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pump_info = {"direction": "PUMP", "change_percent": 2.50, "score": 8}
         path = build_snapshot(sym, klines, trades, settings, pump_info)
         if path:
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P")]])
-            await context.bot.send_photo(chat_id, open(path, "rb"), caption=f"🧪 <b>ТЕСТОВЫЙ АЛЕРТ</b>", parse_mode="HTML", reply_markup=kb)
+            kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
+                    InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
+                ],
+                [
+                    InlineKeyboardButton("🔥 Liquidation Heatmap", url=f"https://www.coinglass.com/pro/liquidation/{sym}")
+                ]
+            ])
+            await context.bot.send_photo(chat_id, photo=open(path, "rb"), caption=f"🧪 <b>ТЕСТОВЫЙ АЛЕРТ</b>", parse_mode="HTML", reply_markup=kb)
     except Exception as e: await update.message.reply_text(f"❌ Ошибка: {e}")
     finally: await client.close()
