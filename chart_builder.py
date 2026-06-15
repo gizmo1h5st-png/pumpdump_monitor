@@ -8,6 +8,11 @@ from datetime import datetime
 
 os.makedirs("/tmp/snapshots", exist_ok=True)
 
+def format_price(x, pos=None):
+    """Удаляет лишние нули в конце цены"""
+    if x is None: return ""
+    return f"{x:g}"
+
 def klines_to_df(klines):
     try:
         if not klines or not isinstance(klines, list) or len(klines) < 10: return pd.DataFrame()
@@ -29,7 +34,6 @@ def klines_to_df(klines):
         df.sort_index(inplace=True)
         if df['Close'].max() <= 0: return pd.DataFrame()
 
-        # Расчет индикаторов
         df['SMA9'] = df['Volume'].rolling(window=9).mean().fillna(df['Volume'])
         diff = (df['High'] - df['Low']).replace(0, 1)
         df['Delta'] = (((df['Close'] - df['Low']) / diff) * df['Volume']) - (df['Volume'] / 2)
@@ -84,27 +88,30 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
     fig, axlist = mpf.plot(df[['Open', 'High', 'Low', 'Close']], type='candle', style=s, volume=False, addplot=ap, figsize=(15, 16),
                            returnfig=True, panel_ratios=tuple(ratios), datetime_format='%H:%M', tight_layout=False)
 
-    plt.subplots_adjust(left=0.05, right=0.80, top=0.94, bottom=0.05, hspace=0.35)
+    plt.subplots_adjust(left=0.05, right=0.82, top=0.94, bottom=0.05, hspace=0.35)
 
+    # Применяем умный форматтер ко всем шкалам
     for i in range(0, len(axlist), 2):
         ax = axlist[i]
         ax.yaxis.tick_right()
         ax.yaxis.set_label_position("right")
-        ax.yaxis.set_major_formatter(mticker.FormatStrFormatter('%.6f'))
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(format_price))
         ax.tick_params(axis='y', colors='white', labelsize=10, labelright=True)
 
     ax_main = axlist[0]
     
-    # Золотая линия
+    # Золотая линия без лишних нулей
     if res_p > 0:
+        clean_res_p = format_price(res_p)
         ax_main.axhline(y=res_p, color='#f0b90b', linewidth=2, alpha=0.8, zorder=10)
-        ax_main.text(0.5, res_p, f" {label_usd} F {res_p:.6f} ", color='black', fontweight='bold', 
+        ax_main.text(0.5, res_p, f" {label_usd} F {clean_res_p} ", color='black', fontweight='bold', 
                      ha='center', va='center', bbox=dict(boxstyle="round,pad=0.2", facecolor='#f0b90b', ec='none'), zorder=11)
 
-    # ЛИНИЯ ТЕКУЩЕЙ ЦЕНЫ + ЯРКАЯ МЕТКА
+    # Метка текущей цены без лишних нулей
     curr_v = df['Close'].iloc[-1]
+    clean_curr_v = format_price(curr_v)
     ax_main.axhline(y=curr_v, color='#02c076', linestyle='--', linewidth=1.5, alpha=0.6, zorder=14)
-    ax_main.annotate(f" {curr_v:.6f} ", xy=(1, curr_v), xycoords=('axes fraction', 'data'),
+    ax_main.annotate(f" {clean_curr_v} ", xy=(1, curr_v), xycoords=('axes fraction', 'data'),
                      xytext=(10, 0), textcoords='offset points', color='black', fontweight='bold', 
                      fontsize=12, va='center', ha='left',
                      bbox=dict(boxstyle='round,pad=0.3', fc='#02c076', ec='none'), zorder=15)
