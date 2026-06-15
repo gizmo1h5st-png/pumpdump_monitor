@@ -30,11 +30,9 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     chat_id = update.effective_chat.id
     s = await get_settings(chat_id)
-    
     uptime = str(datetime.utcnow() - MONITOR.start_time).split(".")[0]
     last_upd = MONITOR.last_update_time.strftime("%H:%M:%S") if MONITOR.last_update_time else "Н/Д"
     activity_log = "\n".join(MONITOR.recent_activity) if MONITOR.recent_activity else "Активности пока нет"
-    
     status_text = (
         f"🖥 <b>СТАТУС:</b> 🟢 OK | <b>Uptime:</b> <code>{uptime}</code>\n"
         f"┣ Пар: <b>{len(MONITOR.symbols)}</b> | ТФ: <b>{s['timeframe']}m</b>\n"
@@ -46,7 +44,6 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"┣ Тема: <b>{s['theme'].upper()}</b>\n"
         f"┗ Индикаторы: <b>{'📈' if s['show_delta'] else '⬜'}Delta {'📈' if s['show_oi'] else '⬜'}OI {'📈' if s['show_liq'] else '⬜'}Liq</b>\n"
     )
-
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📈 Порог: 5%", callback_data="set_thr_5"), InlineKeyboardButton("📈 Порог: 10%", callback_data="set_thr_10")],
         [InlineKeyboardButton("🕒 1m", callback_data="tf_1"), InlineKeyboardButton("🕒 5m", callback_data="tf_5"), InlineKeyboardButton("🕒 15m", callback_data="tf_15")],
@@ -77,15 +74,8 @@ async def expert_settings_callback(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     chat_id = update.effective_chat.id
     s = await get_settings(chat_id)
-    text = (
-        f"🛠 <b>ФИЛЬТРЫ ОБЪЕМА:</b>\n\n"
-        f"┣ Мин. объем (24ч): <b>${s['volume_min_usd']:,.0f}</b>\n"
-        f"┗ <i>Бот игнорирует монеты с объемом ниже этого порога.</i>"
-    )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 100k", callback_data="set_vol_100000"), InlineKeyboardButton("💰 1M", callback_data="set_vol_1000000")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="settings")],
-    ])
+    text = (f"🛠 <b>ФИЛЬТРЫ ОБЪЕМА:</b>\n\n┣ Мин. объем (24ч): <b>${s['volume_min_usd']:,.0f}</b>\n┗ <i>Игнорировать монеты ниже этого порога.</i>")
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("💰 100k", callback_data="set_vol_100000"), InlineKeyboardButton("💰 1M", callback_data="set_vol_1000000")],[InlineKeyboardButton("⬅️ Назад", callback_data="settings")]])
     await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
 
 async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -94,86 +84,55 @@ async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = await get_alerts(chat_id, limit=5)
     back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")]])
     if not rows:
-        text = "Алертов пока нет."
-        if query: await query.edit_message_text(text, reply_markup=back_kb)
-        else: await update.message.reply_text(text, reply_markup=back_kb)
+        if query: await query.edit_message_text("Алертов пока нет.", reply_markup=back_kb)
+        else: await update.message.reply_text("Алертов пока нет.", reply_markup=back_kb)
         return
     if query: await query.message.delete()
     for r in rows:
         emoji = "🟢" if r['direction'] == "PUMP" else "🔴"
         caption = f"{emoji} <b>{r['direction']}</b> <code>{r['symbol']}</code>\n📈 {r['change_percent']:+.2f}% @ <code>{r['price']:,.2f}</code>"
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{r['symbol']}.P"),
-                InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{r['symbol']}")
-            ],
-            [
-                InlineKeyboardButton("🔥 Liquidation Heatmap", url=f"https://www.coinglass.com/pro/liquidation/{r['symbol']}")
-            ]
-        ])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{r['symbol']}.P"),InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{r['symbol']}")],[InlineKeyboardButton("🔥 Liquidation Heatmap", url=f"https://www.coinglass.com/pro/liquidation/Bybit/{r['symbol']}")]])
         if r["screenshot_path"] and os.path.exists(r["screenshot_path"]):
             await context.bot.send_photo(chat_id, photo=open(r["screenshot_path"], "rb"), caption=caption, parse_mode="HTML", reply_markup=kb)
     await context.bot.send_message(chat_id, "Выше последние 5 алертов.", reply_markup=back_kb)
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    data = query.data
-    chat_id = update.effective_chat.id
-
+    await query.answer(); data = query.data; chat_id = update.effective_chat.id
     if data == "main_menu": return await start(update, context)
     if data == "settings": return await settings_callback(update, context)
     if data == "expert_settings": return await expert_settings_callback(update, context)
     if data == "indicator_settings": return await indicator_settings_callback(update, context)
     if data == "alerts": return await alerts_cmd(update, context)
-    
-    if data.startswith("set_thr_"):
-        await save_settings(chat_id, {"pump_threshold": float(data.split("_")[-1])})
-        return await settings_callback(update, context)
-    elif data.startswith("tf_"):
-        await save_settings(chat_id, {"timeframe": data.split("_")[-1]})
-        return await settings_callback(update, context)
-    elif data.startswith("set_theme_"):
-        await save_settings(chat_id, {"theme": data.split("_")[-1]})
-        return await settings_callback(update, context)
-    elif data.startswith("toggle_ind_"):
-        ind = data.split("_")[-1]
-        s = await get_settings(chat_id)
-        field = f"show_{ind}"
-        await save_settings(chat_id, {field: 0 if s[field] else 1})
-        return await indicator_settings_callback(update, context)
-    elif data.startswith("set_vol_"):
-        await save_settings(chat_id, {"volume_min_usd": float(data.split("_")[-1])})
-        return await expert_settings_callback(update, context)
-    elif data == "toggle_pause":
-        s = await get_settings(chat_id)
-        await save_settings(chat_id, {"paused": 0 if s["paused"] else 1})
-        return await settings_callback(update, context)
+    if data.startswith("set_thr_"): await save_settings(chat_id, {"pump_threshold": float(data.split("_")[-1])}); return await settings_callback(update, context)
+    if data.startswith("tf_"): await save_settings(chat_id, {"timeframe": data.split("_")[-1]}); return await settings_callback(update, context)
+    if data.startswith("set_theme_"): await save_settings(chat_id, {"theme": data.split("_")[-1]}); return await settings_callback(update, context)
+    if data.startswith("toggle_ind_"):
+        ind = data.split("_")[-1]; s = await get_settings(chat_id); field = f"show_{ind}"
+        await save_settings(chat_id, {field: 0 if s[field] else 1}); return await indicator_settings_callback(update, context)
+    if data.startswith("set_vol_"): await save_settings(chat_id, {"volume_min_usd": float(data.split("_")[-1])}); return await expert_settings_callback(update, context)
+    if data == "toggle_pause":
+        s = await get_settings(chat_id); await save_settings(chat_id, {"paused": 0 if s["paused"] else 1}); return await settings_callback(update, context)
 
 async def test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text("⏳ Генерирую тестовый алерт...")
     from bybit_client import BybitClient
     from chart_builder import build_snapshot
-    client = BybitClient()
-    await client.start()
+    client = BybitClient(); await client.start()
     try:
-        sym = "BTCUSDT"
-        settings = await get_settings(chat_id)
+        sym = "BTCUSDT"; settings = await get_settings(chat_id)
         klines = await client.get_klines(sym, settings["timeframe"], limit=50)
         trades = await client.get_recent_trade(sym, limit=60)
+        
+        if not klines:
+            await update.message.reply_text("❌ Ошибка: Не удалось получить данные от биржи (403 Forbidden). Проверьте прокси Cloudflare!")
+            return
+
         pump_info = {"direction": "PUMP", "change_percent": 2.50, "score": 8}
         path = build_snapshot(sym, klines, trades, settings, pump_info)
         if path:
-            kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
-                    InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
-                ],
-                [
-                    InlineKeyboardButton("🔥 Liquidation Heatmap", url=f"https://www.coinglass.com/pro/liquidation/{sym}")
-                ]
-            ])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")],[InlineKeyboardButton("🔥 Liquidation Heatmap", url=f"https://www.coinglass.com/pro/liquidation/Bybit/{sym}")]])
             await context.bot.send_photo(chat_id, photo=open(path, "rb"), caption=f"🧪 <b>ТЕСТОВЫЙ АЛЕРТ</b>", parse_mode="HTML", reply_markup=kb)
-    except Exception as e: await update.message.reply_text(f"❌ Ошибка: {e}")
+    except Exception as e: await update.message.reply_text(f"❌ Критическая ошибка: {e}")
     finally: await client.close()
