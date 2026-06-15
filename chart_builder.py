@@ -81,14 +81,11 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
         ap.append(mpf.make_addplot(df['Liq_D'], panel=cur_p, type='bar', color='#f84960', width=0.6))
         ratios.append(1.2); headers.append((cur_p, "<CoinGlass> Aggregate Liquidations")); cur_p += 1
 
-    # ОТРИСОВКА
     fig, axlist = mpf.plot(df[['Open', 'High', 'Low', 'Close']], type='candle', style=s, volume=False, addplot=ap, figsize=(15, 16),
                            returnfig=True, panel_ratios=tuple(ratios), datetime_format='%H:%M', tight_layout=False)
 
-    # Жесткая настройка отступов: 20% под цену (right=0.80)
     plt.subplots_adjust(left=0.05, right=0.80, top=0.94, bottom=0.05, hspace=0.35)
 
-    # Настройка шкал на всех панелях
     for i in range(0, len(axlist), 2):
         ax = axlist[i]
         ax.yaxis.tick_right()
@@ -104,8 +101,9 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
         ax_main.text(0.5, res_p, f" {label_usd} F {res_p:.6f} ", color='black', fontweight='bold', 
                      ha='center', va='center', bbox=dict(boxstyle="round,pad=0.2", facecolor='#f0b90b', ec='none'), zorder=11)
 
-    # Яркая метка текущей цены
+    # ЛИНИЯ ТЕКУЩЕЙ ЦЕНЫ + ЯРКАЯ МЕТКА
     curr_v = df['Close'].iloc[-1]
+    ax_main.axhline(y=curr_v, color='#02c076', linestyle='--', linewidth=1.5, alpha=0.6, zorder=14)
     ax_main.annotate(f" {curr_v:.6f} ", xy=(1, curr_v), xycoords=('axes fraction', 'data'),
                      xytext=(10, 0), textcoords='offset points', color='black', fontweight='bold', 
                      fontsize=12, va='center', ha='left',
@@ -116,7 +114,6 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
     ax_main.text(0, 1.05, title_str, transform=ax_main.transAxes, fontsize=20, fontweight='bold', color='white')
     ax_main.text(1, 1.05, f"TF: {settings.get('timeframe', '5')}m", transform=ax_main.transAxes, fontsize=14, color='#707a8a', ha='right')
 
-    # Подписи
     for p_idx, text in headers:
         axlist[p_idx*2].text(0.01, 0.85, text, transform=axlist[p_idx*2].transAxes, color='#707a8a', fontsize=8)
 
