@@ -12,48 +12,44 @@ def klines_to_df(klines):
         if not klines or len(klines) < 10:
             return pd.DataFrame()
             
-        # Формируем DF
-        df_raw = pd.DataFrame(klines)
-        dates = pd.to_datetime(df_raw[0].astype(float), unit='ms')
+        # Bybit v5: [0]t, [1]o, [2]h, [3]l, [4]c, [5]v, [6]turnover
+        raw = pd.DataFrame(klines)
         
-        df = pd.DataFrame({
-            'Open': df_raw[1].astype(float),
-            'High': df_raw[2].astype(float),
-            'Low': df_raw[3].astype(float),
-            'Close': df_raw[4].astype(float),
-            'Volume': df_raw[5].astype(float),
-            'Turnover': df_raw[6].astype(float) if df_raw.shape[1] > 6 else (df_raw[5].astype(float) * df_raw[4].astype(float))
-        }, index=dates)
+        # Создаем DataFrame с именами, которые MPLFINANCE понимает по умолчанию
+        df = pd.DataFrame(index=pd.to_datetime(raw[0].astype(float), unit='ms'))
+        df['Open'] = raw[1].astype(float)
+        df['High'] = raw[2].astype(float)
+        df['Low'] = raw[3].astype(float)
+        df['Close'] = raw[4].astype(float)
+        df['Volume'] = raw[5].astype(float)
+        df['Turnover'] = raw[6].astype(float) if raw.shape[1] > 6 else (df['Volume'] * df['Close'])
         
-        df.index.name = 'Date'
-        df = df.sort_index() # Сортируем от старых к новым для корректных расчетов
+        df = df.sort_index() # От старых к новым
         
-        # SMA 9
-        df['vol_sma'] = df['Volume'].rolling(window=9).mean().fillna(df['Volume'])
+        # Расчет индикаторов
+        df['SMA9'] = df['Volume'].rolling(window=9).mean().fillna(df['Volume'])
         
         # Delta & CVD
         diff = (df['High'] - df['Low']).replace(0, 1)
-        df['delta'] = ((df['Close'] - df['Low']) / diff) * df['Volume']
-        df['delta'] = df['delta'] - (df['Volume'] / 2)
-        df['cvd'] = df['delta'].cumsum()
+        df['Delta'] = (((df['Close'] - df['Low']) / diff) * df['Volume']) - (df['Volume'] / 2)
+        df['CVD_Close'] = df['Delta'].cumsum()
+        df['CVD_Open'] = df['CVD_Close'].shift(1).fillna(df['CVD_Close'])
+        df['CVD_High'] = df[['CVD_Open', 'CVD_Close']].max(axis=1)
+        df['CVD_Low'] = df[['CVD_Open', 'CVD_Close']].min(axis=1)
         
-        # CVD Candles
-        df['cvd_open'] = df['cvd'].shift(1).fillna(df['cvd'])
-        df['cvd_high'] = df[['cvd_open', 'cvd']].max(axis=1)
-        df['cvd_low'] = df[['cvd_open', 'cvd']].min(axis=1)
+        # OI
+        df['OI_Close'] = df['Turnover']
+        df['OI_Open'] = df['OI_Close'].shift(1).fillna(df['OI_Close'])
+        df['OI_High'] = df[['OI_Open', 'OI_Close']].max(axis=1)
+        df['OI_Low'] = df[['OI_Open', 'OI_Close']].min(axis=1)
         
-        # OI Candles
-        df['oi_open'] = df['Turnover'].shift(1).fillna(df['Turnover'])
-        df['oi_high'] = df[['oi_open', 'Turnover']].max(axis=1)
-        df['oi_low'] = df[['oi_open', 'Turnover']].min(axis=1)
+        # Liq
+        df['Liq_Up'] = np.where(df['Close'] < df['Open'], df['Volume'] * 0.1, 0)
+        df['Liq_Down'] = np.where(df['Close'] > df['Open'], -df['Volume'] * 0.08, 0)
         
-        # Liquidations
-        df['liq_up'] = np.where(df['Close'] < df['Open'], df['Volume'] * 0.1, 0)
-        df['liq_down'] = np.where(df['Close'] > df['Open'], -df['Volume'] * 0.08, 0)
-        
-        return df.fillna(0) # Финальная чистка всех NaN в 0
+        return df.fillna(0)
     except Exception as e:
-        print(f"[Chart Error] klines_to_df: {e}")
+        print(f"[Chart Error] Data: {e}")
         return pd.DataFrame()
 
 def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict = None) -> str:
@@ -76,42 +72,42 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
                            rc={'font.size': 8, 'axes.labelcolor': text_color, 'xtick.color': '#555', 'ytick.color': text_color})
 
     ap = []
+    # Панель 1: Объем SMA
+    ap.append(mpf.make_addplot(df['SMA9'], panel=1, color='#00d2ff', width=0.8))
+
     ratios = [4, 1.2]
     cur_p = 2
     headers = []
 
-    # Volume Panel (SMA)
-    ap.append(mpf.make_addplot(df['vol_sma'], panel=1, color='#00d2ff', width=0.8))
-
-    # CVD Panel
+    # 2. CVD Candles
     if settings.get('show_delta', 1):
-        c_df = df[['cvd_open', 'cvd_high', 'cvd_low', 'cvd']].copy()
-        c_df.columns = ['Open', 'High', 'Low', 'Close']
-        ap.append(mpf.make_addplot(c_df, panel=cur_p, type='candle'))
+        c_data = df[['CVD_Open', 'CVD_High', 'CVD_Low', 'CVD_Close']]
+        c_data.columns = ['Open', 'High', 'Low', 'Close'] # Специфическое требование для candle type
+        ap.append(mpf.make_addplot(c_data, panel=cur_p, type='candle'))
         ratios.append(1.2); headers.append((cur_p, "<CoinGlass> Cumulative Volume Delta (CVD Candles)")); cur_p += 1
     
-    # OI Panel
+    # 3. OI Candles
     if settings.get('show_oi', 1):
-        o_df = df[['oi_open', 'oi_high', 'oi_low', 'Turnover']].copy()
-        o_df.columns = ['Open', 'High', 'Low', 'Close']
-        ap.append(mpf.make_addplot(o_df, panel=cur_p, type='candle'))
+        o_data = df[['OI_Open', 'OI_High', 'OI_Low', 'OI_Close']]
+        o_data.columns = ['Open', 'High', 'Low', 'Close']
+        ap.append(mpf.make_addplot(o_data, panel=cur_p, type='candle'))
         ratios.append(1.2); headers.append((cur_p, "<CoinGlass> Open Interest (OI)")); cur_p += 1
         
-    # Liquidations Panel
+    # 4. Liquidations
     if settings.get('show_liq', 1):
-        ap.append(mpf.make_addplot(df['liq_up'], panel=cur_p, type='bar', color='#02c076', width=0.6))
-        ap.append(mpf.make_addplot(df['liq_down'], panel=cur_p, type='bar', color='#f84960', width=0.6))
+        ap.append(mpf.make_addplot(df['Liq_Up'], panel=cur_p, type='bar', color='#02c076', width=0.6))
+        ap.append(mpf.make_addplot(df['Liq_Down'], panel=cur_p, type='bar', color='#f84960', width=0.6))
         ratios.append(1.2); headers.append((cur_p, "<CoinGlass> Aggregate Liquidations")); cur_p += 1
 
-    # Основной график
-    main_df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+    # ГАРАНТИРУЕМ, ЧТО ОСНОВНОЙ DF ИМЕЕТ ВСЕ НУЖНЫЕ КОЛОНКИ
+    main_plot_df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
 
-    fig, axlist = mpf.plot(main_df, type='candle', style=s, volume=True, addplot=ap, figsize=(14, 16),
+    fig, axlist = mpf.plot(main_plot_df, type='candle', style=s, volume=True, addplot=ap, figsize=(14, 16),
                            returnfig=True, panel_ratios=tuple(ratios), datetime_format='%H:%M', 
                            tight_layout=False, scale_padding=0)
 
-    # Жесткий отступ справа 18% для шкалы цен
-    plt.subplots_adjust(left=0.05, right=0.82, top=0.94, bottom=0.05, hspace=0.35)
+    # Фиксируем отступ справа 22% под цену
+    plt.subplots_adjust(left=0.05, right=0.78, top=0.94, bottom=0.05, hspace=0.35)
 
     ax_main = axlist[0]
     ax_main.yaxis.tick_right()
@@ -123,15 +119,15 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
                  ha='center', va='center', bbox=dict(boxstyle="round,pad=0.2", facecolor='#f0b90b', ec='none'))
 
     # Цена
-    curr_p = main_df['Close'].iloc[-1]
-    ax_main.text(1.03, curr_p, f"{curr_p:.6f}", transform=ax_main.get_yaxis_transform(),
-                 color='black', fontweight='bold', fontsize=11, ha='left', va='center',
+    curr_v = main_plot_df['Close'].iloc[-1]
+    ax_main.text(1.04, curr_v, f"{curr_v:.6f}", transform=ax_main.get_yaxis_transform(),
+                 color='black', fontweight='bold', fontsize=12, ha='left', va='center',
                  bbox=dict(boxstyle='round,pad=0.4', fc='#02c076', ec='none'))
 
     # Шапка
     title_str = f"{symbol}   {pumpdump_info['change_percent']:+.2f}%" if pumpdump_info else symbol
-    ax_main.text(0, 1.05, title_str, transform=ax_main.transAxes, fontsize=18, fontweight='bold', color='white' if is_dark else 'black')
-    ax_main.text(0.95, 1.05, f"TF: {settings.get('timeframe', '5')}m", transform=ax_main.transAxes, fontsize=14, color='#707a8a', ha='right')
+    ax_main.text(0, 1.05, title_str, transform=ax_main.transAxes, fontsize=20, fontweight='bold', color='white' if is_dark else 'black')
+    ax_main.text(0.98, 1.05, f"TF: {settings.get('timeframe', '5')}m", transform=ax_main.transAxes, fontsize=14, color='#707a8a', ha='right')
 
     # Подписи панелей
     axlist[2].text(0.01, 0.85, "Volume SMA 9", transform=axlist[2].transAxes, color='#00d2ff', fontsize=8, fontweight='bold')
