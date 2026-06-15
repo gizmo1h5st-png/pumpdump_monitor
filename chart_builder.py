@@ -12,19 +12,23 @@ def klines_to_df(klines):
         if not klines or len(klines) < 10:
             return pd.DataFrame()
             
-        # Bybit v5: [0]t, [1]o, [2]h, [3]l, [4]c, [5]v, [6]turnover
+        # Правильная обработка данных Bybit v5
         raw = pd.DataFrame(klines)
         
-        # Создаем DataFrame с именами, которые MPLFINANCE понимает по умолчанию
-        df = pd.DataFrame(index=pd.to_datetime(raw[0].astype(float), unit='ms'))
-        df['Open'] = raw[1].astype(float)
-        df['High'] = raw[2].astype(float)
-        df['Low'] = raw[3].astype(float)
-        df['Close'] = raw[4].astype(float)
-        df['Volume'] = raw[5].astype(float)
-        df['Turnover'] = raw[6].astype(float) if raw.shape[1] > 6 else (df['Volume'] * df['Close'])
+        # Создаем копию с нужными нам колонками и сразу задаем имена
+        df = pd.DataFrame({
+            'Date': pd.to_datetime(raw[0].astype(float), unit='ms'),
+            'Open': raw[1].astype(float),
+            'High': raw[2].astype(float),
+            'Low': raw[3].astype(float),
+            'Close': raw[4].astype(float),
+            'Volume': raw[5].astype(float),
+            'Turnover': raw[6].astype(float) if raw.shape[1] > 6 else (raw[5].astype(float) * raw[4].astype(float))
+        })
         
-        df = df.sort_index() # От старых к новым
+        # Устанавливаем индекс и сортируем (важно для индикаторов)
+        df.set_index('Date', inplace=True)
+        df = df.sort_index()
         
         # Расчет индикаторов
         df['SMA9'] = df['Volume'].rolling(window=9).mean().fillna(df['Volume'])
@@ -43,7 +47,7 @@ def klines_to_df(klines):
         df['OI_High'] = df[['OI_Open', 'OI_Close']].max(axis=1)
         df['OI_Low'] = df[['OI_Open', 'OI_Close']].min(axis=1)
         
-        # Liq
+        # Liquidations
         df['Liq_Up'] = np.where(df['Close'] < df['Open'], df['Volume'] * 0.1, 0)
         df['Liq_Down'] = np.where(df['Close'] > df['Open'], -df['Volume'] * 0.08, 0)
         
@@ -56,7 +60,7 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
     df = klines_to_df(klines)
     if df.empty or len(df) < 15: return ""
     
-    # Золотая линия
+    # Расчет Золотой линии
     max_idx = df['Turnover'].idxmax()
     res_p = df.loc[max_idx, 'High']
     label_usd = f"{df['Turnover'].max()/1000:.0f}k$"
@@ -72,64 +76,55 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
                            rc={'font.size': 8, 'axes.labelcolor': text_color, 'xtick.color': '#555', 'ytick.color': text_color})
 
     ap = []
-    # Панель 1: Объем SMA
     ap.append(mpf.make_addplot(df['SMA9'], panel=1, color='#00d2ff', width=0.8))
 
     ratios = [4, 1.2]
     cur_p = 2
     headers = []
 
-    # 2. CVD Candles
     if settings.get('show_delta', 1):
-        c_data = df[['CVD_Open', 'CVD_High', 'CVD_Low', 'CVD_Close']]
-        c_data.columns = ['Open', 'High', 'Low', 'Close'] # Специфическое требование для candle type
+        c_data = df[['CVD_Open', 'CVD_High', 'CVD_Low', 'CVD_Close']].copy()
+        c_data.columns = ['Open', 'High', 'Low', 'Close']
         ap.append(mpf.make_addplot(c_data, panel=cur_p, type='candle'))
         ratios.append(1.2); headers.append((cur_p, "<CoinGlass> Cumulative Volume Delta (CVD Candles)")); cur_p += 1
     
-    # 3. OI Candles
     if settings.get('show_oi', 1):
-        o_data = df[['OI_Open', 'OI_High', 'OI_Low', 'OI_Close']]
+        o_data = df[['OI_Open', 'OI_High', 'OI_Low', 'OI_Close']].copy()
         o_data.columns = ['Open', 'High', 'Low', 'Close']
         ap.append(mpf.make_addplot(o_data, panel=cur_p, type='candle'))
         ratios.append(1.2); headers.append((cur_p, "<CoinGlass> Open Interest (OI)")); cur_p += 1
         
-    # 4. Liquidations
     if settings.get('show_liq', 1):
         ap.append(mpf.make_addplot(df['Liq_Up'], panel=cur_p, type='bar', color='#02c076', width=0.6))
         ap.append(mpf.make_addplot(df['Liq_Down'], panel=cur_p, type='bar', color='#f84960', width=0.6))
         ratios.append(1.2); headers.append((cur_p, "<CoinGlass> Aggregate Liquidations")); cur_p += 1
 
-    # ГАРАНТИРУЕМ, ЧТО ОСНОВНОЙ DF ИМЕЕТ ВСЕ НУЖНЫЕ КОЛОНКИ
-    main_plot_df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
+    # Важно: берем только нужные колонки для mpf.plot
+    main_df = df[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
 
-    fig, axlist = mpf.plot(main_plot_df, type='candle', style=s, volume=True, addplot=ap, figsize=(14, 16),
+    fig, axlist = mpf.plot(main_df, type='candle', style=s, volume=True, addplot=ap, figsize=(14, 16),
                            returnfig=True, panel_ratios=tuple(ratios), datetime_format='%H:%M', 
                            tight_layout=False, scale_padding=0)
 
-    # Фиксируем отступ справа 22% под цену
-    plt.subplots_adjust(left=0.05, right=0.78, top=0.94, bottom=0.05, hspace=0.35)
+    plt.subplots_adjust(left=0.05, right=0.80, top=0.94, bottom=0.05, hspace=0.35)
 
     ax_main = axlist[0]
     ax_main.yaxis.tick_right()
     ax_main.yaxis.set_label_position("right")
 
-    # Золотая линия
     ax_main.axhline(y=res_p, color='#f0b90b', linewidth=2, alpha=0.8)
     ax_main.text(0.5, res_p, f" {label_usd} F {res_p:.6f} ", color='black', fontweight='bold', 
                  ha='center', va='center', bbox=dict(boxstyle="round,pad=0.2", facecolor='#f0b90b', ec='none'))
 
-    # Цена
-    curr_v = main_plot_df['Close'].iloc[-1]
+    curr_v = main_df['Close'].iloc[-1]
     ax_main.text(1.04, curr_v, f"{curr_v:.6f}", transform=ax_main.get_yaxis_transform(),
                  color='black', fontweight='bold', fontsize=12, ha='left', va='center',
                  bbox=dict(boxstyle='round,pad=0.4', fc='#02c076', ec='none'))
 
-    # Шапка
     title_str = f"{symbol}   {pumpdump_info['change_percent']:+.2f}%" if pumpdump_info else symbol
     ax_main.text(0, 1.05, title_str, transform=ax_main.transAxes, fontsize=20, fontweight='bold', color='white' if is_dark else 'black')
     ax_main.text(0.98, 1.05, f"TF: {settings.get('timeframe', '5')}m", transform=ax_main.transAxes, fontsize=14, color='#707a8a', ha='right')
 
-    # Подписи панелей
     axlist[2].text(0.01, 0.85, "Volume SMA 9", transform=axlist[2].transAxes, color='#00d2ff', fontsize=8, fontweight='bold')
     for p_idx, text in headers:
         axlist[p_idx*2].text(0.01, 0.85, text, transform=axlist[p_idx*2].transAxes, color='#707a8a', fontsize=8)
