@@ -28,6 +28,8 @@ async def init_db():
                 show_delta INTEGER DEFAULT 1,
                 show_oi INTEGER DEFAULT 1,
                 show_liq INTEGER DEFAULT 1,
+                show_heatmap INTEGER DEFAULT 1,
+                show_sma INTEGER DEFAULT 1,
                 updated_at TEXT
             )
         """)
@@ -77,13 +79,15 @@ async def get_settings(chat_id: int) -> dict:
                 "show_delta": 1,
                 "show_oi": 1,
                 "show_liq": 1,
+                "show_heatmap": 1,
+                "show_sma": 1,
                 "updated_at": datetime.utcnow().isoformat(),
             }
             await db.execute("""
                 INSERT INTO user_settings (chat_id, timeframe, pump_threshold, volume_min_usd,
                     zone_pct, ob_mult, volume_delta_mult, fvg_enabled, lot_threshold, paused, theme, 
-                    show_delta, show_oi, show_liq, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    show_delta, show_oi, show_liq, show_heatmap, show_sma, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, tuple(d.values()))
             await db.commit()
             return d
