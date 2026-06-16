@@ -45,7 +45,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚙️ <b>ПАРАМЕТРЫ:</b>\n"
         f"┣ Порог: <b>{s['pump_threshold']}%</b> | Увед: <b>{'⏸ OFF' if s['paused'] else '🔔 ON'}</b>\n"
         f"┣ Тема: <b>{s['theme'].upper()}</b>\n"
-        f"┗ Индикаторы: <b>{'📈' if s['show_delta'] else '⬜'}Delta {'📈' if s['show_oi'] else '⬜'}OI {'📈' if s['show_liq'] else '⬜'}Liq</b>\n"
+        f"┗ Фильтр объема: <b>{s['volume_min_usd']/1000:,.0f}k$</b>\n"
     )
 
     kb = InlineKeyboardMarkup([
@@ -53,32 +53,12 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🕒 1m", callback_data="tf_1"), InlineKeyboardButton("🕒 5m", callback_data="tf_5"), InlineKeyboardButton("🕒 15m", callback_data="tf_15")],
         [InlineKeyboardButton("🎨 Тема: DARK", callback_data="set_theme_dark"), InlineKeyboardButton("🎨 Тема: LIGHT", callback_data="set_theme_light")],
         [InlineKeyboardButton("📊 Настройка панелей", callback_data="indicator_settings")],
-        [InlineKeyboardButton("🛠 Фильтр объема: " + f"{s['volume_min_usd']/1000:,.0f}k$", callback_data="expert_settings")],
+        [InlineKeyboardButton("🛠 Фильтры объема", callback_data="expert_settings")],
         [InlineKeyboardButton("⏸ Пауза / Старт", callback_data="toggle_pause")],
         [InlineKeyboardButton("🔄 Обновить статус", callback_data="settings")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")],
     ])
     await query.edit_message_text(status_text, reply_markup=kb, parse_mode="HTML")
-
-async def expert_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    chat_id = update.effective_chat.id
-    s = await get_settings(chat_id)
-    vol_k = int(s['volume_min_usd'] / 1000)
-    
-    text = (f"🛠 <b>НАСТРОЙКА ОБЪЕМА ТОРГОВ (24ч):</b>\n\n"
-            f"Текущий порог: <b>${s['volume_min_usd']:,.0f}</b>\n\n"
-            f"<i>Используйте кнопки ниже для точной настройки фильтра:</i>")
-    
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("➖ 100k", callback_data="vol_minus"),
-            InlineKeyboardButton(f"💰 {vol_k}k$", callback_data="expert_settings"),
-            InlineKeyboardButton("➕ 100k", callback_data="vol_plus")
-        ],
-        [InlineKeyboardButton("⬅️ Назад в настройки", callback_data="settings")],
-    ])
-    await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
 
 def get_indicator_btn_text(label, value):
     icon = "✅" if value else "❌"
@@ -92,10 +72,32 @@ async def indicator_settings_callback(update: Update, context: ContextTypes.DEFA
     text = "📊 <b>НАСТРОЙКА ПАНЕЛЕЙ ИНДИКАТОРОВ:</b>"
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(get_indicator_btn_text("Delta Volume", s['show_delta']), callback_data="toggle_ind_delta")],
-        [InlineKeyboardButton(get_indicator_btn_text("Open Interest", s['show_oi']), callback_data="toggle_ind_oi")],
-        [InlineKeyboardButton(get_indicator_btn_text("Liquidations", s['show_liq']), callback_data="toggle_ind_liq")],
+        [InlineKeyboardButton(get_indicator_btn_text("Liquidation Heatmap", s['show_heatmap']), callback_data="toggle_ind_heatmap")],
+        [InlineKeyboardButton(get_indicator_btn_text("Volume SMA 9", s['show_sma']), callback_data="toggle_ind_sma")],
+        [InlineKeyboardButton(get_indicator_btn_text("Delta Volume (CVD)", s['show_delta']), callback_data="toggle_ind_delta")],
+        [InlineKeyboardButton(get_indicator_btn_text("Open Interest (OI)", s['show_oi']), callback_data="toggle_ind_oi")],
+        [InlineKeyboardButton(get_indicator_btn_text("Aggregate Liquidations", s['show_liq']), callback_data="toggle_ind_liq")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="settings")],
+    ])
+    await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+
+async def expert_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    chat_id = update.effective_chat.id
+    s = await get_settings(chat_id)
+    vol_k = int(s['volume_min_usd'] / 1000)
+    
+    text = (f"🛠 <b>НАСТРОЙКА ОБЪЕМА ТОРГОВ (24ч):</b>\n\n"
+            f"Текущий порог: <b>${s['volume_min_usd']:,.0f}</b>\n\n"
+            f"<i>Используйте кнопки ниже для настройки:</i>")
+    
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("➖ 100k", callback_data="vol_minus"),
+            InlineKeyboardButton(f"💰 {vol_k}k$", callback_data="expert_settings"),
+            InlineKeyboardButton("➕ 100k", callback_data="vol_plus")
+        ],
+        [InlineKeyboardButton("⬅️ Назад в настройки", callback_data="settings")],
     ])
     await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
 
@@ -122,9 +124,6 @@ async def alerts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [
                 InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{r['symbol']}.P"),
                 InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{r['symbol']}")
-            ],
-            [
-                InlineKeyboardButton("🔥 Heatmap", url=f"https://www.coinglass.com/pro/liquidation/Bybit/{r['symbol']}")
             ]
         ])
         if r["screenshot_path"] and os.path.exists(r["screenshot_path"]):
@@ -195,15 +194,10 @@ async def test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         path = build_snapshot(sym, klines, trades, settings, {"direction": "PUMP", "change_percent": 2.50})
         if path:
-            kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
-                    InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
-                ],
-                [
-                    InlineKeyboardButton("🔥 Heatmap", url=f"https://www.coinglass.com/pro/liquidation/Bybit/{sym}")
-                ]
-            ])
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
+                InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
+            ]])
             await context.bot.send_photo(chat_id, photo=open(path, "rb"), caption="🧪 <b>ТЕСТОВЫЙ АЛЕРТ</b>", parse_mode="HTML", reply_markup=kb)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
