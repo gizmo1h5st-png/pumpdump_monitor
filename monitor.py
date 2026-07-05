@@ -13,17 +13,19 @@ class Monitor:
         self.client = BybitClient()
         self.bot = bot_app
         self.symbols: list[str] = []
-        self.price_history: dict[str, deque] = defaultdict(lambda: deque(maxlen=300))
+        self.price_history: dict[str, deque] = defaultdict(lambda: deque(maxlen=400))
         self.snap_sem = asyncio.Semaphore(MAX_CONCURRENT_SNAPS)
         self.running = True
         self._last_alert: dict[str, datetime] = {}
-        self.alert_counts: dict[str, int] = {} # Счетчик сигналов для каждой пары
+        self.alert_counts: dict[str, int] = {}
         
+        # Статистика
         self.start_time = datetime.utcnow()
         self.last_update_time = None
+        self.last_poll_time = None
         self.cycles_count = 0
         self.last_error = "Нет"
-        self.recent_activity = deque(maxlen=5)
+        self.recent_activity = deque(maxlen=8) 
 
     async def start(self):
         await self.client.start()
@@ -40,18 +42,23 @@ class Monitor:
         try:
             instruments = await self.client.get_linear_symbols()
             tickers = await self.client.get_tickers()
+            if not tickers: return
+            
             vol_map = {t["symbol"]: float(t.get("turnover24h", 0)) for t in tickers}
             new_symbols = []
             for inst in instruments:
                 sym = inst["symbol"]
                 if inst.get("status") != "Trading": continue
-                if vol_map.get(sym, 0) >= 100_000:
+                # Берем все ликвидные пары
+                if vol_map.get(sym, 0) >= 50_000:
                     new_symbols.append(sym)
+            
             new_symbols.sort(key=lambda s: vol_map.get(s, 0), reverse=True)
             self.symbols = new_symbols[:500]
             self.last_update_time = datetime.utcnow()
+            print(f"[Monitor] Реестр обновлен: {len(self.symbols)} пар")
         except Exception as e:
-            self.last_error = str(e)[:50]
+            self.last_error = f"Update error: {str(e)[:30]}"
 
     async def _loop_update_symbols(self):
         while self.running:
@@ -60,95 +67,99 @@ class Monitor:
 
     async def _loop_pumpdump(self):
         while self.running:
-            await asyncio.sleep(1.5)
-            self.cycles_count += 1
+            await asyncio.sleep(2.0)
             if not self.symbols: continue
             try:
                 tickers = await self.client.get_tickers()
+                if not tickers: continue
+                
+                self.last_poll_time = datetime.utcnow()
+                self.cycles_count += 1
                 now = datetime.utcnow()
+                
                 for t in tickers:
                     sym = t["symbol"]
                     if sym not in self.symbols: continue
                     price = float(t.get("lastPrice", 0))
                     if price <= 0: continue
+                    
                     hist = self.price_history[sym]
                     hist.append((now, price))
-                    await self._check_pumpdump(sym, price, hist, now)
+                    
+                    # Проверяем изменение только если есть хотя бы 2 точки
+                    if len(hist) > 1:
+                        await self._check_pumpdump(sym, price, hist, now)
             except Exception as e:
-                self.last_error = str(e)[:50]
+                self.last_error = f"Poll error: {str(e)[:30]}"
 
     async def _check_pumpdump(self, sym: str, price: float, hist: deque, now: datetime):
+        # Окно анализа - 5 минут
         window = timedelta(minutes=5)
         old_price = None
+        
         for ts, p in reversed(hist):
-            if now - ts <= window: old_price = p
-            else: break
+            if now - ts >= timedelta(seconds=30): # Минимум 30 сек разницы для расчета
+                old_price = p
+                if now - ts >= window: break # Нашли край 5-минутного окна
+        
         if old_price is None or old_price == 0: return
+        
         change = (price - old_price) / old_price * 100.0
         
-        if abs(change) >= 1.5:
-            self.recent_activity.append(f"{now.strftime('%H:%M:%S')} | {sym} | {change:+.2f}%")
+        # Консоль последних движений (>1.0%)
+        if abs(change) >= 1.0:
+            entry = f"🕒 {now.strftime('%H:%M')} | {sym} | {change:+.2f}%"
+            if entry not in self.recent_activity:
+                self.recent_activity.append(entry)
 
-        if abs(change) >= 5.0:
-            direction = "PUMP" if change > 0 else "DUMP"
+        # Порог алерта (Только PUMP)
+        if change >= 5.0:
             last = self._last_alert.get(sym)
-            
-            # Дедупликация: не чаще раза в 10 минут
             if last and (now - last) < timedelta(minutes=10): return
             
-            # Логика счетчика сигналов
+            # Номер сигнала
             if last and (now - last) < timedelta(hours=1):
                 self.alert_counts[sym] = self.alert_counts.get(sym, 0) + 1
             else:
                 self.alert_counts[sym] = 1
             
-            signal_num = self.alert_counts[sym]
             self._last_alert[sym] = now
-            await self._fire_alert(sym, direction, change, price, signal_num)
+            asyncio.create_task(self._fire_alert(sym, change, price, self.alert_counts[sym]))
 
-    async def _fire_alert(self, sym: str, direction: str, change: float, price: float, signal_num: int):
-        from db import DB_PATH, add_alert
+    async def _fire_alert(self, sym: str, change: float, price: float, signal_num: int):
+        from db import DB_PATH, add_alert, get_settings
         import aiosqlite
         try:
+            direction = "PUMP"
             async with aiosqlite.connect(DB_PATH) as db:
                 db.row_factory = aiosqlite.Row
                 async with db.execute("SELECT * FROM user_settings WHERE paused=0") as cur:
                     rows = await cur.fetchall()
             
             for row in rows:
-                if abs(change) < row["pump_threshold"]: continue
+                if change < row["pump_threshold"]: continue
                 
-                tf = row["timeframe"]
-                klines = await self.client.get_klines(sym, tf, limit=50)
-                trades = await self.client.get_recent_trade(sym, limit=60)
+                settings = dict(row)
+                klines = await self.client.get_klines(sym, settings["timeframe"], limit=60)
+                path = build_snapshot(sym, klines, [], settings, {"change_percent": change})
                 
-                path = build_snapshot(sym, klines, trades, dict(row), {
-                    "direction": direction, "change_percent": round(change, 2), "score": 7,
-                })
+                if not path: continue
                 
                 await add_alert(row["chat_id"], sym, direction, round(change, 2), price, path)
                 
-                emoji = "🟢" if direction == "PUMP" else "🔴"
-                # Добавляем Номер Сигнала в текст
+                emoji = "🟢"
                 caption = (
-                    f"{emoji} <b>{direction} (Сигнал №{signal_num})</b>\n\n"
-                    f"Пара: <code>{sym}</code>\n"
-                    f"Изменение: <b>{change:+.2f}%</b> (5m)\n"
-                    f"Цена: <code>{price:,.2f}</code>\n"
-                    f"Тема: <code>{row['theme'].upper()}</code>"
+                    f"{emoji} <b>{sym} {change:+.2f}% (№{signal_num})</b>\n\n"
+                    f"💰 Цена: <code>{price:g}</code>\n"
+                    f"🕒 ТФ: <code>{settings['timeframe']}m</code>"
                 )
-                kb = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
-                        InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
-                    ],
-                    [
-                        InlineKeyboardButton("🔥 Liquidation Heatmap", url=f"https://www.coinglass.com/pro/liquidation/{sym}")
-                    ]
-                ])
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📊 TV", url=f"https://www.tradingview.com/chart/?symbol=BYBIT%3A{sym}.P"),
+                    InlineKeyboardButton("⚡ Bybit", url=f"https://www.bybit.com/trade/usdt/{sym}")
+                ]])
                 await self.bot.bot.send_photo(row["chat_id"], open(path, "rb"), caption=caption, parse_mode="HTML", reply_markup=kb)
         except Exception as e:
-            print(f"[Alert Error] {e}")
+            print(f"Fire alert error: {e}")
 
     async def _cleanup_loop(self):
         while self.running:
