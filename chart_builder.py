@@ -47,9 +47,15 @@ def klines_to_df(klines):
         df['CVD_C'] = df['RawDelta'].cumsum()
         df['CVD_O'] = df['CVD_C'].shift(1).fillna(df['CVD_C'])
         
+        # Очистка свечей CVD от гигантских фитилей
+        df['CVD_H'] = df[['CVD_O', 'CVD_C']].max(axis=1)
+        df['CVD_L'] = df[['CVD_O', 'CVD_C']].min(axis=1)
+        
         # OI
         df['OI_C'] = df['Turnover']
         df['OI_O'] = df['OI_C'].shift(1).fillna(df['OI_C'])
+        df['OI_H'] = df[['OI_O', 'OI_C']].max(axis=1)
+        df['OI_L'] = df[['OI_O', 'OI_C']].min(axis=1)
         
         # Liq
         df['Liq_U'] = np.where(df['Close'] < df['Open'], df['Volume'] * 0.1, 0)
@@ -66,11 +72,16 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
     res_p = df.loc[df['Turnover'].idxmax(), 'High']
     label_usd = f"{max_turn/1000:.0f}k$"
 
-    bg_color = '#0b0e11'
-    text_color = '#707a8a'
+    # ТЕМЫ
+    is_dark = settings.get("theme", "dark") == "dark"
+    bg_color = '#0b0e11' if is_dark else '#ffffff'
+    text_color = '#707a8a' if is_dark else '#333333'
+    grid_color = '#1e2329' if is_dark else '#f0f0f0'
+    axis_text_color = 'white' if is_dark else 'black'
+
     colors = mpf.make_marketcolors(up='#02c076', down='#f84960', inherit=True, volume='in', edge='inherit')
     s = mpf.make_mpf_style(base_mpf_style='charles', marketcolors=colors, facecolor=bg_color, 
-                           edgecolor='#2b3139', gridcolor='#1e2329', gridstyle='solid',
+                           edgecolor='#2b3139', gridcolor=grid_color, gridstyle='solid',
                            rc={'font.size': 9, 'axes.labelcolor': text_color, 'xtick.color': '#555', 'ytick.color': text_color})
 
     ap = []
@@ -86,13 +97,13 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
 
     # 2. CVD Candles (Порядок №2)
     if settings.get('show_delta', 1):
-        c_df = df[['CVD_O', 'High', 'Low', 'CVD_C']].copy(); c_df.columns = ['Open', 'High', 'Low', 'Close']
+        c_df = df[['CVD_O', 'CVD_H', 'CVD_L', 'CVD_C']].copy(); c_df.columns = ['Open', 'High', 'Low', 'Close']
         ap.append(mpf.make_addplot(c_df, panel=cur_p, type='candle'))
         ratios.append(1.2); headers.append((cur_p, "<CoinGlass> Cumulative Volume Delta (CVD)")); cur_p += 1
     
     # 3. OI Candles (Порядок №3)
     if settings.get('show_oi', 1):
-        o_df = df[['OI_O', 'High', 'Low', 'OI_C']].copy(); o_df.columns = ['Open', 'High', 'Low', 'Close']
+        o_df = df[['OI_O', 'OI_H', 'OI_L', 'OI_C']].copy(); o_df.columns = ['Open', 'High', 'Low', 'Close']
         ap.append(mpf.make_addplot(o_df, panel=cur_p, type='candle'))
         ratios.append(1.2); headers.append((cur_p, "<CoinGlass> Open Interest (OI)")); cur_p += 1
         
@@ -116,7 +127,7 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
             ax.yaxis.set_major_formatter(mticker.FormatStrFormatter('%g'))
         else:
             ax.yaxis.set_major_formatter(mticker.FuncFormatter(human_format))
-        ax.tick_params(axis='y', colors='white', labelsize=10, labelright=True)
+        ax.tick_params(axis='y', colors=axis_text_color, labelsize=10, labelright=True)
 
     ax_main = axlist[0]
     
@@ -140,14 +151,14 @@ def build_snapshot(symbol, klines, trades, settings: dict, pumpdump_info: dict =
 
     # Последняя цена + пунктир
     curr_v = df['Close'].iloc[-1]
-    ax_main.axhline(y=curr_v, color='#02c076', linestyle='--', linewidth=1, alpha=0.6, zorder=14)
+    ax_main.axhline(y=curr_v, color='#02c076', linestyle='--', linewidth=1.5, alpha=0.6, zorder=14)
     ax_main.annotate(f" {curr_v:g} ", xy=(1, curr_v), xycoords=('axes fraction', 'data'),
                      xytext=(10, 0), textcoords='offset points', color='black', fontweight='bold', 
                      fontsize=12, va='center', ha='left', bbox=dict(boxstyle='round,pad=0.3', fc='#02c076', ec='none'), zorder=15)
 
     # Чистый заголовок
     title_str = f"{symbol}   {pumpdump_info['change_percent']:+.2f}%" if pumpdump_info else symbol
-    ax_main.text(0, 1.05, title_str, transform=ax_main.transAxes, fontsize=22, fontweight='bold', color='white')
+    ax_main.text(0, 1.05, title_str, transform=ax_main.transAxes, fontsize=20, fontweight='bold', color='white' if is_dark else 'black')
     ax_main.text(0.98, 1.05, f"TF: {settings.get('timeframe', '5')}m", transform=ax_main.transAxes, fontsize=14, color='#707a8a', ha='right')
 
     for p_idx, text in headers:
